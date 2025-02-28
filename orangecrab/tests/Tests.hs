@@ -3,9 +3,12 @@
 {-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE OverloadedStrings #-}
 
-module Test where
+module Tests where
 
-import Test.RingBuffer (writeProperty)
+import Clash.Prelude
+import Hedgehog
+
+import Tests.RingBuffer
 
 tests :: IO Bool
 tests = checkParallel $ Group "Ram" [

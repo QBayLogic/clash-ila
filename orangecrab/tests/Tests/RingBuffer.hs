@@ -3,7 +3,14 @@
 {-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE OverloadedStrings #-}
 
-module Test.RingBuffer (writeProperty) where
+module Tests.RingBuffer where
+
+import Clash.Prelude
+import Hedgehog
+import qualified Hedgehog.Gen as Gen
+import qualified Hedgehog.Range as Range
+import qualified Data.List as DL
+import qualified Data.Maybe as DM
 
 import RingBuffer
 

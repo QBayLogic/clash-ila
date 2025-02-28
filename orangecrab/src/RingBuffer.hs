@@ -5,12 +5,6 @@
 
 module RingBuffer where
 
-import Hedgehog
-import qualified Hedgehog.Gen as Gen
-import qualified Hedgehog.Range as Range
-import qualified Data.List as DL
-import qualified Data.Maybe as DM
-
 import Clash.Prelude
 
 -- | A non-conventional ring buffer, capable of writing data to the tail of the buffer, overwriting old data
