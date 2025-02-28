@@ -73,6 +73,15 @@ library
     Domain
     Pmod
     RGB
+    RingBuffer
+
+test-suite unittests
+  import: common-options
+  type: exitcode-stdio-1.0
+  hs-source-dirs: tests
+  main-is: Test.hs
+  other-modules:
+    Tests.RingBuffer
 
 library blink
   import: common-options
