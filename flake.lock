@@ -11,8 +11,8 @@
         "nixpkgs": "nixpkgs"
       },
       "locked": {
-        "lastModified": 1728980982,
-        "narHash": "sha256-mAF6J++Ps1gFs7H4NSToIFGH53E+roMuBe/2rgzehTY=",
+        "lastModified": 1739643814,
+        "narHash": "sha256-NAO2pJIkLbLBf6jo2PKzmbYOETXZGradV5VsBC40mQo=",
         "owner": "clash-lang",
         "repo": "clash-compiler",
         "rev": "029419bda7eda7baabde1969d2541bbc33b3126b",
@@ -20,7 +20,6 @@
       },
       "original": {
         "owner": "clash-lang",
-        "ref": "dd/nix-update",
         "repo": "clash-compiler",
         "type": "github"
       }
