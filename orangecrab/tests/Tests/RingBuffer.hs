@@ -14,20 +14,22 @@ import qualified Data.Maybe as DM
 
 import RingBuffer
 
-data SimpleState a = SSIgnore | SSValue a | SSEnd deriving(Generic, NFDataX)
-intoMaybe :: SimpleState a -> Maybe a
+-- | Define the start/middle/end of a sequence, making sequences testing easier
+data SequenceState a = SSIgnore | SSValue a | SSEnd deriving(Generic, NFDataX)
+intoMaybe :: SequenceState a -> Maybe a
 intoMaybe SSIgnore = Nothing
 intoMaybe SSEnd = Nothing
 intoMaybe (SSValue a) = Just a
 
-intoSS :: Maybe a -> SimpleState a
+intoSS :: Maybe a -> SequenceState a
 intoSS Nothing = SSIgnore
 intoSS (Just a) = SSValue a
 
-isEndSS :: SimpleState a -> Bool
+isEndSS :: SequenceState a -> Bool
 isEndSS SSEnd = True
 isEndSS _ = False
 
+-- | Simulate feeding input into the ring buffer
 simulateDump ::
   forall dom a size . (KnownDomain dom, NFDataX a, KnownNat size, 1 <= size) =>
   Clock dom ->
@@ -55,6 +57,12 @@ simulateDump clk rst en size ini rawInput = go
     ringOutput = (withClockResetEnable clk rst en dumpRingBuffer) (isEndSS <$> input) ring
     go = DM.catMaybes $ sampleN (DL.length inputList + 1) ringOutput
 
+-- | Expected output of the ring buffer
+-- There are two cases to consider;
+--  1. Our input is smaller than or equal to the buffer
+--  2. Our input is bigger than the buffer
+-- In case 1, the expected output is the same as the input, with the initial values filling in the rest
+-- In case 2, the expected output are the last inserted values
 expectedDump ::
   -- | Buffer size
   SNat size ->
@@ -71,14 +79,14 @@ expectedDump size ini rawInput = go
     bufferSize = fromInteger $ snatToInteger size
 
     case1 = (DL.take inputLength input) DL.++ (DL.replicate (bufferSize - inputLength) ini)
-    case2 =
-      (DL.take (inputLength - bufferSize) $ DL.drop bufferSize input) DL.++
-      (DL.drop (inputLength - bufferSize) $ DL.take bufferSize input)
+    case2 = DL.drop (inputLength - bufferSize) input
 
     go
       | inputLength <= bufferSize = case1
       | otherwise = case2
 
+-- | Tests for writing to the buffer
+-- As a consequence, it also tests reading of the buffer
 writeProperty :: Property
 writeProperty = property $ do
   initValue <- forAll $ Gen.int (Range.constant 1000 2000)
