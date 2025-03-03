@@ -73,6 +73,7 @@ library
     Pmod
     RGB
     RingBuffer
+    Probes
 
 test-suite unittests
   import: common-options
