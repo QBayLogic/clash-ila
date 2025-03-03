@@ -53,7 +53,7 @@ simulateDump clk rst en size ini rawInput = go
         DL.replicate (fromInteger $ snatToInteger size) SSIgnore -- Pad the signal so we can read it all
       ]
     input = fromList inputList
-    ring = (withClockResetEnable clk rst en ringBuffer) size ini $ (intoMaybe <$> input)
+    ring = (withClockResetEnable clk rst en ringBuffer) size ini (pure False) $ (intoMaybe <$> input)
     ringOutput = (withClockResetEnable clk rst en dumpRingBuffer) (isEndSS <$> input) ring
     go = DM.catMaybes $ sampleN (DL.length inputList + 1) ringOutput
 

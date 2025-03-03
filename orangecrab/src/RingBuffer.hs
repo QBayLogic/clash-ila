@@ -15,6 +15,8 @@ ringBuffer ::
   SNat size ->
   -- | Initial value to use with 
   a ->
+  -- | Clear the buffer
+  Signal dom Bool ->
   -- | Value to push onto the buffer
   Signal dom (Maybe a) ->
   -- | Index in the circle buffer to read from
@@ -22,14 +24,14 @@ ringBuffer ::
   -- | Value stored at the index specified
   -- NOTE: Reads are delayed by 1 cycle
   (Signal dom a, Signal dom (Index size))
-ringBuffer size ini writeData readIndex =
+ringBuffer size ini clear writeData readIndex =
   (blockRam1 NoClearOnReset size ini readAddr ramWrite, getLength)
   where
     getHeadTail :: Signal dom (Index size, Index size)
     getHeadTail = register (0, 0) $ newHeadTail <$> bundle (getHeadTail, writeData, getLength)
 
     getLength :: Signal dom (Index size)
-    getLength = register 0 $ newLength <$> bundle (getLength, writeData)
+    getLength = register 0 $ mux clear (pure 0) $ newLength <$> bundle (getLength, writeData)
 
     newLength (old, Nothing) = old
     newLength (old, Just _) = satAdd SatBound old 1
