@@ -19,6 +19,9 @@ PNR_FLAGS= \
 
 default: bitstream
 
+repl:
+	${CABAL} run clash-proxy:clash -- --interactive
+
 upload: ${BUILDDIR}/04-bitstream/${TOP}.bit
 	${PROG} -S $<
 

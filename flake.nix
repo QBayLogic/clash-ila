@@ -44,7 +44,6 @@
               # Haskell stuff
               myHsPkgs.cabal-install
               myHsPkgs.haskell-language-server
-              myHsPkgs.clash-ghc
 
               # Idk
               ecpprog.defaultPackage.${system}
