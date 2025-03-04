@@ -19,6 +19,9 @@ PNR_FLAGS= \
 
 default: bitstream
 
+test:
+	${CABAL} test
+
 repl:
 	${CABAL} run clash-proxy:clash -- --interactive
 
