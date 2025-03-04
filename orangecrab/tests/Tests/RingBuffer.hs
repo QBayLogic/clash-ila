@@ -66,19 +66,17 @@ simulateDump clk rst en size ini rawInput = go
 expectedDump ::
   -- | Buffer size
   SNat size ->
-  -- | Init value for the buffer
-  a ->
   -- | Input data
   [Maybe a] ->
   -- | Buffer content
   [a]
-expectedDump size ini rawInput = go
+expectedDump size rawInput = go
   where
     input = DM.catMaybes rawInput
     inputLength = DL.length input
     bufferSize = fromInteger $ snatToInteger size
 
-    case1 = (DL.take inputLength input) DL.++ (DL.replicate (bufferSize - inputLength) ini)
+    case1 = (DL.take inputLength input)
     case2 = DL.drop (inputLength - bufferSize) input
 
     go
@@ -92,5 +90,5 @@ writeProperty = property $ do
   initValue <- forAll $ Gen.int (Range.constant 1000 2000)
   randomInput <- forAll $ Gen.list (Range.linear 0 300) $ Gen.maybe $ Gen.int (Range.constant 0 100)
 
-  simulateDump systemClockGen systemResetGen enableGen d50 initValue randomInput === expectedDump d50 initValue randomInput
+  simulateDump systemClockGen systemResetGen enableGen d50 initValue randomInput === expectedDump d50 randomInput
 
