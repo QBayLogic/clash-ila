@@ -17,6 +17,8 @@ ringBuffer ::
   -- | Initial value to use with 
   a ->
   -- | Clear the buffer
+  -- NOTE: any writes during a clear cycle will be discarded
+  -- NOTE: a read prior to the clear cycle will fail!
   Signal dom Bool ->
   -- | Value to push onto the buffer
   Signal dom (Maybe a) ->
@@ -29,10 +31,16 @@ ringBuffer size ini clear writeData readIndex =
   (blockRam1 NoClearOnReset size ini readAddr ramWrite, getLength)
   where
     getHeadTail :: Signal dom (Index size, Index size)
-    getHeadTail = register (0, 0) $ newHeadTail <$> bundle (getHeadTail, writeData, getLength)
+    getHeadTail = register (0, 0) $
+      mux clear
+        (pure (0, 0)) $
+        newHeadTail <$> bundle (getHeadTail, writeData, getLength)
 
     getLength :: Signal dom (Index (size + 1))
-    getLength = register 0 $ mux clear (pure 0) $ newLength <$> bundle (getLength, writeData)
+    getLength = register 0 $
+      mux clear
+        (pure 0) $
+        newLength <$> bundle (getLength, writeData)
 
     newLength (old, Nothing) = old
     newLength (old, Just _) = satAdd SatBound old 1
@@ -81,7 +89,7 @@ dumpRingBuffer trigger buffer = readValue
     zeroDefault (Just i) = i
 
     updateState :: ReadingState (Index size) -> (Bool, Index (size + 1)) -> ReadingState (Index size)
-    updateState RSIdle (True, 0) = RSIdle
+    updateState _ (_, 0) = RSIdle
     updateState RSIdle (True, _) = RSReading 1 -- We already read out the value of index 0
     updateState RSIdle (False, _) = RSIdle
     updateState (RSReading i) (_, len)
