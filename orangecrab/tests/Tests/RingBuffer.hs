@@ -43,11 +43,11 @@ simulateDump size ini rawInput = go
         [SSNothing], -- Reset clock
         intoSS <$> rawInput, -- Our input
         [SSInputEnd], -- Trigger the read
-        DL.replicate (fromInteger $ snatToInteger size) SSNothing -- Pad out the signal so we can read the input back
+        DL.replicate (fromInteger $ snatToInteger size) SSInputEnd -- Pad out the signal so we can read the input back
       ]
     input = fromList inputList
     ring = ringBuffer size ini (pure False) (intoMaybe <$> input)
-    ringOutput = dumpRingBuffer (isEndSS <$> input) ring
+    ringOutput = testbenchRingBuffer (isEndSS <$> input) ring
     go = DM.catMaybes $ sampleN (DL.length inputList + 1) ringOutput
 
 -- | Expected output of the ring buffer

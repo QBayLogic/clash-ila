@@ -58,51 +58,43 @@ ringBuffer size ini clear writeData readIndex =
     ramWrite :: Signal dom (Maybe (Index size, a))
     ramWrite = liftA2 (\addr write -> (fmap (addr,) write)) (snd $ unbundle getHeadTail) writeData
 
-data ReadingState i = RSIdle | RSReading i | RSDead deriving(Generic, NFDataX)
-
--- | Read the entire contents of a ring buffer
-dumpRingBuffer :: 
+-- | A testbench for the ring buffer, capable of reading out the entire content of the ringBuffer
+testbenchRingBuffer :: 
   forall dom a size . (HiddenClockResetEnable dom, NFDataX a, KnownNat size, 1 <= size) =>
-  -- | Trigger, when set it will reset the readIndex count
+  -- | Every clock this is active, it will output one value from the buffer
+  -- If all values are read, the output will be `Nothing`
   Signal dom Bool ->
   -- | The ring buffer component
   (Signal dom (Index size) -> (Signal dom a, Signal dom (Index (size + 1)))) ->
   -- | Data from the buffer, takes `size + 1` amount of cycles to read out the entire buffer
   -- The first set of data will arive 1 cycles after being triggered
-  -- Signal dom (Maybe a)
   Signal dom (Maybe a)
-dumpRingBuffer trigger buffer = readValue
+testbenchRingBuffer active buffer = readValue
   where
-    (bufferValue, bufferLength) = buffer $ zeroDefault <$> index
+    (bufferValue, bufferLength) = buffer index
 
-    -- By default, try to read out the first value, doing so saves us a clock cycle
-    zeroDefault :: Maybe (Index size) -> Index size
-    zeroDefault Nothing = 0
-    zeroDefault (Just i) = i
+    -- | Sync the activity with the delay from the RAM read
+    delayedActive = register False active
+    -- | The output value is always invalid (thus should be Nothing) if we already wrote all bytes
+    -- or the buffer has no content
+    valueValid = delayedActive .&&. (bufferLength ./=. pure 0) .&&. writeCount ./=. bufferLength
 
-    updateState :: ReadingState (Index size) -> (Bool, Index (size + 1)) -> ReadingState (Index size)
-    updateState _ (_, 0) = RSIdle
-    updateState RSIdle (True, _) = RSReading 1 -- We already read out the value of index 0
-    updateState RSIdle (False, _) = RSIdle
-    updateState (RSReading i) (_, len)
-      -- If we're at our last value, keep it active for one more cycle but without 'fetching' anything
-      | i == (resize $ satSub SatZero len 1) = RSDead
-      -- | Special case for when the buffer is of size 1, since we already pre-fetched the value
-      -- the prior case will not trigger and will loop infinitely.
-      -- We also skip the RSDead state, as this cycle the value is already sent
-      | (0 :: Index size) == (resize $ satSub SatZero len 1) = RSIdle
-      | otherwise = RSReading $ i + 1
-    updateState RSDead _ = RSIdle
+    -- | Keep track of how many items we read out
+    writeCount :: Signal dom (Index (size + 1))
+    writeCount = register 0 $ liftA2 newWriteCount valueValid writeCount
 
-    updateOutput :: ReadingState (Index size) -> Maybe (Index size)
-    updateOutput RSIdle = Nothing
-    updateOutput (RSReading i) = Just i
-    updateOutput RSDead = Just 0
+    newWriteCount :: Bool -> Index (size + 1) -> Index (size + 1)
+    newWriteCount True count = count + 1
+    newWriteCount False count = count
 
-    index :: Signal dom (Maybe (Index size))
-    index = moore updateState updateOutput RSIdle $ bundle (trigger, bufferLength)
+    index = register 0 $ liftA3 newIndex active index bufferLength
 
-    readValue = mux (isJust <$> index)
+    newIndex True i len
+      | i == (resize $ satSub SatZero len 1) = i
+      | otherwise = i + 1
+    newIndex False i _ = i
+
+    readValue = mux valueValid
       (Just <$> bufferValue)
       (pure Nothing)
 
