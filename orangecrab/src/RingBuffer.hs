@@ -34,7 +34,7 @@ ringBuffer size ini clear writeData readIndex =
     getHeadTail = register (0, 0) $
       mux clear
         (pure (0, 0)) $
-        newHeadTail <$> bundle (getHeadTail, writeData, getLength)
+        liftA3 newHeadTail getHeadTail writeData getLength
 
     getLength :: Signal dom (Index (size + 1))
     getLength = register 0 $
@@ -45,8 +45,8 @@ ringBuffer size ini clear writeData readIndex =
     newLength (old, Nothing) = old
     newLength (old, Just _) = satAdd SatBound old 1
 
-    newHeadTail (old, Nothing, _) = old
-    newHeadTail ((_, oldTail), Just _, len) = (newHead, newTail)
+    newHeadTail old Nothing _ = old
+    newHeadTail (_, oldTail) (Just _) len = (newHead, newTail)
       where
         newTail = satAdd SatWrap oldTail 1
 
@@ -57,14 +57,10 @@ ringBuffer size ini clear writeData readIndex =
           | otherwise = 0
 
     readAddr :: Signal dom (Index size)
-    readAddr = (uncurry $ satAdd SatWrap) <$> bundle (fst $ unbundle getHeadTail, readIndex)
+    readAddr = liftA2 (satAdd SatWrap) (fst $ unbundle getHeadTail) readIndex
 
     ramWrite :: Signal dom (Maybe (Index size, a))
-    ramWrite = (\(addr, write) ->
-        case write of
-          Nothing -> Nothing
-          Just value -> Just (addr, value)
-      ) <$> bundle (snd $ unbundle getHeadTail, writeData)
+    ramWrite = liftA2 (\addr write -> (fmap (addr,) write)) (snd $ unbundle getHeadTail) writeData
 
 data ReadingState i = RSIdle | RSReading i | RSDead deriving(Generic, NFDataX)
 
