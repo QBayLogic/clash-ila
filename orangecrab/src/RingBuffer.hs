@@ -1,13 +1,15 @@
 
 module RingBuffer where
 
+import Protocols
+import Protocols.Wishbone
+
 import Clash.Prelude
-import Data.Maybe (isJust)
 
 -- | A non-conventional ring buffer, capable of writing data to the tail of the buffer, overwriting old data
 -- Can read from any point within the buffer specified by the index
 ringBuffer ::
-  forall dom a size . (HiddenClockResetEnable dom, NFDataX a, KnownNat size, 1 <= size) =>
+  forall dom size a . (HiddenClockResetEnable dom, NFDataX a, KnownNat size, 1 <= size) =>
   -- | The size of the circle buffer
   SNat size ->
   -- | Initial value to use with 
@@ -57,6 +59,40 @@ ringBuffer size ini clear writeData readIndex =
 
     ramWrite :: Signal dom (Maybe (Index size, a))
     ramWrite = liftA2 (\addr write -> (fmap (addr,) write)) (snd $ unbundle getHeadTail) writeData
+
+-- | Exposes a wishbone interface to read out data from the ringBuffer
+-- Address must be an index within the buffer, trying to read and address bigger than the buffer
+-- capacity will result in `err` being asserted
+ringBufferReader ::
+  forall dom size dat .
+  ( HiddenClockResetEnable dom
+  , NFDataX dat
+  , 1 <= size
+  , KnownNat size
+  ) =>
+  -- | The buffer component
+  (Signal dom (Index size) -> (Signal dom dat, Signal dom (Index (size + 1)))) ->
+  -- | The buffer reader circuit
+  Circuit (Wishbone dom Standard (CLog 2 size) dat) ()
+ringBufferReader buffer = Circuit handler
+  where
+    handler (fwdIn, _) = (output, ())
+      where
+        (bufferValue, bufferLength) = buffer (bitCoerce . addr <$> fwdIn)
+        -- | Checks if the value in the current cycle is valid
+        -- This compensates for the delay too
+        isValueValid = register False $ inTransaction <$> fwdIn .&&. not <$> invalidAddress
+
+        invalidAddress = (unpack . resize . addr <$> fwdIn) .>=. bufferLength
+        inTransaction m2s = not (writeEnable m2s) && strobe m2s && busCycle m2s
+
+        output = liftA3 (\value valid err -> WishboneS2M {
+            retry = False,
+            stall = False,
+            err = err,
+            acknowledge = valid,
+            readData = value
+          }) bufferValue isValueValid invalidAddress
 
 -- | A testbench for the ring buffer, capable of reading out the entire content of the ringBuffer
 testbenchRingBuffer :: 
