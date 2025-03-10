@@ -15,12 +15,8 @@ ilaCore ::
   Signal dom Bool ->
   -- | The input signal to probe
   Signal dom a ->
-  (
-    -- | The buffer
-    (Signal dom (Index size) -> (Signal dom (Maybe a), Signal dom (Index (size + 1))))
-    -- | Same as the input signal
-  , Signal dom a
-  )
+  -- | The buffer
+  (Signal dom (Index size) -> (Signal dom (Maybe a), Signal dom (Index (size + 1))))
 ilaCore size capture trigger triggerRst i = record
   where
     triggered :: Signal dom Bool
@@ -32,5 +28,5 @@ ilaCore size capture trigger triggerRst i = record
     buffer :: Signal dom (Index size) -> (Signal dom (Maybe a), Signal dom (Index (size + 1)))
     buffer = ringBuffer size Nothing (not <$> shouldSample) (mux capture (Just . Just <$> i) (pure Nothing))
 
-    record = (buffer, i)
+    record = buffer
 
