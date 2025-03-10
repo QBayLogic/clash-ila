@@ -58,6 +58,7 @@ ${BUILDDIR}/02-hdl/${TOP}.v: top/${NAME}.hs dist-newstyle/packagedb src/*
 	mkdir -p ${BUILDDIR}/01-clash
 	echo
 	${CABAL} run clash-proxy:clash -- \
+		-fplugin=Protocols.Plugin \
 		-package-env $(abspath ..)/.ghc.environment.* \
 		--verilog \
 		-outputdir ${BUILDDIR}/01-clash \

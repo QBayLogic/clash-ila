@@ -60,7 +60,7 @@ common common-options
     clash-cores,
     clash-lib,
     clash-prelude,
-    -- clash-protocols,
+    clash-protocols,
     ghc-typelits-natnormalise,
     ghc-typelits-extra,
     ghc-typelits-knownnat
