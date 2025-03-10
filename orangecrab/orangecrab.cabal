@@ -74,6 +74,7 @@ library
     RGB
     RingBuffer
     Probes
+    Communication
 
 test-suite unittests
   import: common-options
