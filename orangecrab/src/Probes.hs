@@ -9,8 +9,8 @@ ilaCore ::
   SNat size ->
   -- | Capture
   Signal dom Bool ->
-  -- | Trigger
-  Signal dom a ->
+  -- | Trigger predicate
+  (a -> Bool) ->
   -- | Trigger reset
   Signal dom Bool ->
   -- | The input signal to probe
@@ -24,7 +24,7 @@ ilaCore ::
 ilaCore size capture trigger triggerRst i = record
   where
     triggered :: Signal dom Bool
-    triggered = register False $ mux triggerRst (pure False) triggered .||. (trigger .==. i)
+    triggered = register False $ mux triggerRst (pure False) triggered .||. (trigger <$> i)
 
     shouldSample :: Signal dom Bool
     shouldSample = (not <$> triggered) .&&. capture
