@@ -75,6 +75,7 @@ library
     RingBuffer
     Probes
     Communication
+    Packet
 
 test-suite unittests
   import: common-options
