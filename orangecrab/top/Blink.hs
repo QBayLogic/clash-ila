@@ -5,11 +5,18 @@ module Blink where
 import Clash.Annotations.TH
 import Clash.Prelude
 
+import Clash.Cores.UART (ValidBaud)
+
 import Protocols
 import Protocols.Wishbone
+import qualified Protocols.Df as Df
+
+import qualified Data.List as DL
+import qualified Data.Maybe as DM
 
 import Domain
 import Pmod
+import Communication
 
 import RingBuffer
 
@@ -81,11 +88,67 @@ topLogic btn = go
 
     go = unpack <$> (snd $ testCir (btnToIndex . pack <$> btn, pure ()))
 
+-- | How is this NOT a thing yet??
+ackToBool :: Ack -> Bool
+ackToBool (Ack v) = v
+
+topLogicUart ::
+  forall dom baud .
+  (HiddenClockResetEnable dom, ValidBaud dom baud) =>
+  SNat baud ->
+  -- | RX
+  Signal dom Bit ->
+  -- | TX
+  Signal dom Bit
+topLogicUart baud rx = go
+ where
+  bufferBlank = ringBuffer d4 (undefined :: BitVector 8) (pure False)
+  
+  inserted :: Signal dom (Index 6)
+  inserted = register 0 $ flip (satAdd SatBound) 1 <$> inserted
+
+  buffer = bufferBlank $ (\i -> case i of
+    1 -> Just 65
+    2 -> Just 66
+    3 -> Just 67
+    4 -> Just 68
+    _ -> Nothing) <$> inserted
+
+  bufferCircuit ::
+    Circuit
+      (CSignal dom (Maybe (BitVector 8)))
+      (CSignal dom (Maybe (BitVector 8)))
+  bufferCircuit = Circuit exposeIn
+   where
+    exposeIn (idx, _) = out
+     where
+      valueValid = register False $ DM.isJust <$> idx
+      value = fst . buffer $ chrToIndex <$> idx
+
+      chrToIndex :: Maybe (BitVector 8) -> Index 4
+      chrToIndex (Just v) = unpack . pack . resize $ satSub SatZero v 48
+      chrToIndex _ = 0
+
+      out = (
+          pure (),
+          mux valueValid
+            (Just <$> value)
+            (pure Nothing)
+        )
+
+  Circuit main = circuit $ \rxBit -> do
+    (newIndex, txBit) <- uartDf baud -< (txBuffer, rxBit)
+    bufferValue <- bufferCircuit -< newIndex
+    txBuffer <- holdUntilAck -< bufferValue
+    idC -< txBit
+
+  go = snd $ main (rx, pure ())
+
 topEntity ::
   "CLK" ::: Clock Dom48 ->
   "BTN" ::: Reset Dom48 ->
-  "PMOD3" ::: Signal Dom48 PmodBTN ->
-  "PMOD2" ::: Signal Dom48 Pmod8LD
-topEntity clk rst = withClockResetEnable clk rst enableGen topLogic
+  "PMOD1_6" ::: Signal Dom48 Bit ->
+  "PMOD1_5" ::: Signal Dom48 Bit
+topEntity clk rst = withClockResetEnable clk rst enableGen (topLogicUart (SNat @9600))
 
 makeTopEntity 'topEntity
