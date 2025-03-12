@@ -75,7 +75,7 @@ topLogic btn = go
       3 -> Just 15
       4 -> Just 31
       _ -> Nothing) <$> inserted
-    reader = ringBufferReader buffer
+    reader = ringBufferReaderWb buffer
 
     testCir ::
       (HiddenClockResetEnable dom) =>

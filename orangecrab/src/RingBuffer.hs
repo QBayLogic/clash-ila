@@ -3,6 +3,8 @@ module RingBuffer where
 
 import Protocols
 import Protocols.Wishbone
+import Protocols.PacketStream
+import qualified Protocols.Df as Df
 
 import Clash.Prelude
 
@@ -63,7 +65,7 @@ ringBuffer size ini clear writeData readIndex =
 -- | Exposes a wishbone interface to read out data from the ringBuffer
 -- Address must be an index within the buffer, trying to read and address bigger than the buffer
 -- capacity will result in `err` being asserted
-ringBufferReader ::
+ringBufferReaderWb ::
   forall dom size dat .
   ( HiddenClockResetEnable dom
   , NFDataX dat
@@ -74,7 +76,7 @@ ringBufferReader ::
   (Signal dom (Index size) -> (Signal dom dat, Signal dom (Index (size + 1)))) ->
   -- | The buffer reader circuit
   Circuit (Wishbone dom Standard (CLog 2 size) dat) ()
-ringBufferReader buffer = Circuit handler
+ringBufferReaderWb buffer = Circuit handler
   where
     handler (fwdIn, _) = (output, ())
       where
@@ -93,6 +95,73 @@ ringBufferReader buffer = Circuit handler
             acknowledge = valid,
             readData = value
           }) bufferValue isValueValid invalidAddress
+
+-- | Reads out the entire buffer using the PacketStream protocol
+-- The data will be chopped up in bytes and sent one-by-one each clock cycle
+ringBufferReaderPS ::
+  forall dom size dat .
+  ( HiddenClockResetEnable dom
+  , NFDataX dat
+  , BitPack dat
+  , 1 <= size
+  , KnownNat size
+  ) => 
+  -- | The buffer component
+  (Signal dom (Index size) -> (Signal dom dat, Signal dom (Index (size + 1)))) ->
+  -- | The reader circuit, whilst the input is high, it will attempt reading out data from the buffer
+  -- and sends that data via a `PacketStream`. If input is any point low, it will read from the beginning again
+  Circuit (CSignal dom Bool) (PacketStream dom (BitSize dat `DivRU` 8) (Index (size + 1)))
+ringBufferReaderPS buffer = Circuit exposeIn
+ where
+  exposeIn (tryRead, s2m) = out
+   where
+    doIncrement = tryRead .&&. _ready <$> s2m
+    doOutput = tryRead .&&. not . _ready <$> s2m
+
+    (bufferValue, bufferLength) = buffer index
+
+    -- | Sync the activity with the delay from the RAM read
+    delayedActive = register False doOutput
+    -- | The output value is always invalid (thus should be Nothing) if we already wrote all bytes
+    -- or the buffer has no content
+    valueValid = delayedActive .&&. (bufferLength ./=. pure 0) .&&. readCount ./=. bufferLength
+    
+    -- | Keep track of how many items we read out
+    readCount :: Signal dom (Index (size + 1))
+    readCount = mux tryRead
+      (register 0 $ liftA2 newReadCount valueValid readCount)
+      0
+
+    newReadCount :: Bool -> Index (size + 1) -> Index (size + 1)
+    newReadCount True count = count + 1
+    newReadCount False count = count
+
+    index = register 0 $ liftA3 newIndex doIncrement index bufferLength
+
+    newIndex True i len
+      | i == (resize $ satSub SatZero len 1) = i
+      | otherwise = i + 1
+    newIndex False i _ = i
+
+    -- | Takes in any type (as long as it can be `BitPack`'d and chops it up into a vector of bytes
+    splitIntoBytes :: (BitPack a) => a -> Vec (BitSize a `DivRU` 8) (BitVector 8)
+    splitIntoBytes bv = unpack . resize $ pack bv
+
+    -- | Formats the output data into the PacketStream format
+    -- Once we reached the last byte, _last should be valid for all bytes considering we send data
+    -- one-by-one anyways
+    formatData value len count = PacketStreamM2S {
+        _data = splitIntoBytes value,
+        _last = if satSub SatZero len 1 == count then Just maxBound else Nothing,
+        _meta = len,
+        _abort = False
+      }
+
+    packetStream = mux valueValid
+      (Just <$> liftA3 formatData bufferValue bufferLength readCount)
+      (pure Nothing)
+
+    out = (pure (), packetStream)
 
 -- | A testbench for the ring buffer, capable of reading out the entire content of the ringBuffer
 testbenchRingBuffer :: 
