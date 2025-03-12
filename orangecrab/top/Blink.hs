@@ -17,6 +17,7 @@ import qualified Data.Maybe as DM
 import Domain
 import Pmod
 import Communication
+import Probes
 
 import RingBuffer
 
@@ -95,24 +96,19 @@ ackToBool (Ack v) = v
 topLogicUart ::
   forall dom baud .
   (HiddenClockResetEnable dom, ValidBaud dom baud) =>
+  -- | Baud rate of UART
   SNat baud ->
+  -- | Buttons
+  Signal dom (BitVector 4) ->
   -- | RX
   Signal dom Bit ->
   -- | TX
   Signal dom Bit
-topLogicUart baud rx = go
+topLogicUart baud buttons rx = go
  where
-  bufferBlank = ringBuffer d4 (undefined :: BitVector 8) (pure False)
-  
-  inserted :: Signal dom (Index 6)
-  inserted = register 0 $ flip (satAdd SatBound) 1 <$> inserted
+  testSignal = register (0 :: BitVector 8) $ satAdd SatWrap 1 <$> testSignal
 
-  buffer = bufferBlank $ (\i -> case i of
-    1 -> Just 65
-    2 -> Just 66
-    3 -> Just 67
-    4 -> Just 68
-    _ -> Nothing) <$> inserted
+  ila = ilaCore (SNat @10) (pure True) (\s -> s == 58) (pure False) testSignal
 
   bufferCircuit ::
     Circuit
@@ -123,16 +119,20 @@ topLogicUart baud rx = go
     exposeIn (idx, _) = out
      where
       valueValid = register False $ DM.isJust <$> idx
-      value = fst . buffer $ chrToIndex <$> idx
+      value = valueToChr <$> (fst . ila $ chrToIndex <$> idx)
 
-      chrToIndex :: Maybe (BitVector 8) -> Index 4
+      valueToChr :: Maybe (BitVector 8) -> Maybe (BitVector 8)
+      valueToChr (Just v) = Just $ v
+      valueToChr Nothing = Nothing
+
+      chrToIndex :: Maybe (BitVector 8) -> Index 10
       chrToIndex (Just v) = unpack . pack . resize $ satSub SatZero v 48
       chrToIndex _ = 0
 
       out = (
           pure (),
           mux valueValid
-            (Just <$> value)
+            (value)
             (pure Nothing)
         )
 
@@ -147,8 +147,9 @@ topLogicUart baud rx = go
 topEntity ::
   "CLK" ::: Clock Dom48 ->
   "BTN" ::: Reset Dom48 ->
+  "PMOD3" ::: Signal Dom48 PmodBTN ->
   "PMOD1_6" ::: Signal Dom48 Bit ->
   "PMOD1_5" ::: Signal Dom48 Bit
-topEntity clk rst = withClockResetEnable clk rst enableGen (topLogicUart (SNat @9600))
+topEntity clk rst btn = withClockResetEnable clk rst enableGen (topLogicUart (SNat @9600) (pack <$> btn))
 
 makeTopEntity 'topEntity
