@@ -110,38 +110,36 @@ ringBufferReaderPS ::
   (Signal dom (Index size) -> (Signal dom dat, Signal dom (Index (size + 1)))) ->
   -- | The reader circuit, whilst the input is high, it will attempt reading out data from the buffer
   -- and sends that data via a `PacketStream`. If input is any point low, it will read from the beginning again
-  Circuit (CSignal dom Bool) (PacketStream dom (BitSize dat `DivRU` 8) (Index (size + 1)))
+  Circuit
+    (CSignal dom Bool)
+    (PacketStream dom (BitSize dat `DivRU` 8) (Index (size + 1)))
 ringBufferReaderPS buffer = Circuit exposeIn
  where
-  exposeIn (tryRead, s2m) = out
+  exposeIn (active, s2m) = out
    where
-    doIncrement = tryRead .&&. _ready <$> s2m
-    doOutput = tryRead .&&. not . _ready <$> s2m
+    doIncrement = active .&&. _ready <$> s2m
 
     (bufferValue, bufferLength) = buffer index
 
     -- | Sync the activity with the delay from the RAM read
-    delayedActive = register False doOutput
+    delayedActive = register False active
     -- | The output value is always invalid (thus should be Nothing) if we already wrote all bytes
     -- or the buffer has no content
     valueValid = delayedActive .&&. (bufferLength ./=. pure 0) .&&. readCount ./=. bufferLength
-    
-    -- | Keep track of how many items we read out
-    readCount :: Signal dom (Index (size + 1))
-    readCount = mux tryRead
-      (register 0 $ liftA2 newReadCount valueValid readCount)
+
+    -- Deliberately delay the read count by one clock cycle to sync with the actual read from RAM
+    readCount = register 0 $ mux active
+      (mux doIncrement (satAdd SatBound 1 <$> readCount) readCount)
       0
 
-    newReadCount :: Bool -> Index (size + 1) -> Index (size + 1)
-    newReadCount True count = count + 1
-    newReadCount False count = count
-
-    index = register 0 $ liftA3 newIndex doIncrement index bufferLength
-
-    newIndex True i len
-      | i == (resize $ satSub SatZero len 1) = i
-      | otherwise = i + 1
-    newIndex False i _ = i
+    -- Incrementing this way gets us the new index *immediately* rather than having to wait a cycle
+    -- for the register to update
+    oldIndex :: Signal dom (Index size)
+    oldIndex = register 0 index
+    index :: Signal dom (Index size)
+    index = mux active
+      (mux doIncrement (satAdd SatBound 1 <$> oldIndex) oldIndex)
+      0
 
     -- | Takes in any type (as long as it can be `BitPack`'d and chops it up into a vector of bytes
     splitIntoBytes :: (BitPack a) => a -> Vec (BitSize a `DivRU` 8) (BitVector 8)
@@ -157,9 +155,10 @@ ringBufferReaderPS buffer = Circuit exposeIn
         _abort = False
       }
 
-    packetStream = mux valueValid
-      (Just <$> liftA3 formatData bufferValue bufferLength readCount)
-      (pure Nothing)
+    packetStream =
+      mux valueValid
+        (Just <$> liftA3 formatData bufferValue bufferLength readCount)
+        (pure Nothing)
 
     out = (pure (), packetStream)
 
