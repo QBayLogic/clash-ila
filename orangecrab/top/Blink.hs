@@ -15,6 +15,8 @@ import qualified Protocols.Df as Df
 import qualified Data.List as DL
 import qualified Data.Maybe as DM
 
+import Data.Proxy
+
 import Domain
 import Pmod
 import Communication
@@ -86,7 +88,7 @@ topLogicUart baud btns rx = go
     (_activation, txBit) <- uartDf baud -< (txByte, rxBit)
     activeSignal <- triggerReader -< btns
     bufferData <- reader -< activeSignal
-    packet <- dataPacket -< bufferData
+    packet <- dataPacket (Proxy :: Proxy (BitVector 8)) -< bufferData
     txByte <- ps2df -< packet
     idC -< txBit
 
