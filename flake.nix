@@ -21,18 +21,15 @@
           cabal-install = nixpkgs.legacyPackages.${system}.cabal-install;
         };
         pkgs = clash-compiler.inputs.nixpkgs.legacyPackages.${system};
-        myHsPkgs = (pkgs.haskell.packages.ghc910.extend overlay).extend
-          (pkgs.haskell.lib.compose.packageSourceOverrides {
-            orangecrabby = ./orangecrab;
-          });
+        hsPkgs = pkgs.haskell.packages.ghc910.extend (overlay);
       in
       {
-        devShells.default = myHsPkgs.shellFor {
-          packages = p: [ p.orangecrabby ];
+        devShells.default = pkgs.mkShell {
           inputsFrom = [
             clash-compiler.packages.${system}.clash-lib.env
             clash-compiler.packages.${system}.clash-ghc.env
           ];
+
           nativeBuildInputs = 
             [
               # For interacting with the OrangeCrab board.
@@ -42,8 +39,8 @@
               pkgs.gnumake
 
               # Haskell stuff
-              myHsPkgs.cabal-install
-              myHsPkgs.haskell-language-server
+              hsPkgs.cabal-install
+              hsPkgs.haskell-language-server
 
               # Rust subproject
               pkgs.cargo
