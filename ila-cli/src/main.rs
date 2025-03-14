@@ -5,6 +5,8 @@ use std::io::{Read, Write};
 use clap::{Parser, Args, Subcommand};
 use serialport::SerialPort;
 
+mod packet;
+
 #[derive(Parser, Debug)]
 #[command(version, about)]
 #[command(propagate_version = true)]
@@ -15,6 +17,8 @@ struct Cli {
 
 #[derive(Subcommand, Debug)]
 enum Subcommands {
+    /// Analyse incoming packets and attempt to parse them according to packet formats
+    Analysis(AnalysisArgs),
     /// Monitor output of the port, all data is displayed in hex
     Monitor(MonitorArgs),
     /// Lists all serial ports available
@@ -40,25 +44,44 @@ struct MonitorArgs {
     max_per_space: u32,
 }
 
+#[derive(Args, Debug)]
+struct AnalysisArgs {
+    #[arg(short, long, help = "Path to serial port to use")]
+    port: PathBuf,
+
+    #[arg(short, long, default_value_t = 9600, help = "Sets baud rate")]
+    baud: u32,
+}
+
+fn find_specified_port(check: &PathBuf, baud: u32) -> Box<dyn SerialPort> {
+    let ports = serialport::available_ports()
+        .expect("Unable to iterate serial devices. Exiting.");
+
+    let canon = check.as_path()
+        .canonicalize()
+        .expect("Invalid path provided");
+    let check_path = canon.as_os_str()
+        .to_string_lossy();
+    
+    let valid_port = ports.into_iter()
+        .find(|port| port.port_name == check_path)
+        .expect("Provided path is not a valid serial port.");
+
+    serialport::new(valid_port.port_name, baud)
+        .open()
+        .expect("Unable to open serial port (maybe busy?)")
+}
+
+impl ParseSubcommand for AnalysisArgs {
+    fn parse(self) {
+        let port = find_specified_port(&self.port, self.baud);
+        packet_analysis(port, self)
+    }
+}
+
 impl ParseSubcommand for MonitorArgs {
     fn parse(self) {
-        let ports = serialport::available_ports()
-            .expect("Unable to iterate serial devices. Exiting.");
-
-        let canon = self.port.as_path()
-            .canonicalize()
-            .expect("Invalid path provided");
-        let check_path = canon.as_os_str()
-            .to_string_lossy();
-        
-        let valid_port = ports.into_iter()
-            .find(|port| port.port_name == check_path)
-            .expect("Provided path is not a valid serial port.");
-
-        let port = serialport::new(valid_port.port_name, self.baud)
-            .open()
-            .expect("Unable to open serial port (maybe busy?)");
-
+        let port = find_specified_port(&self.port, self.baud);
         monitor_port(port, self)
     }
 }
@@ -93,10 +116,31 @@ fn monitor_port(port: Box<dyn SerialPort>, args: MonitorArgs) {
     }
 }
 
+fn packet_analysis(port: Box<dyn SerialPort>, args: AnalysisArgs) {
+    let mut buffer: Vec<u8> = vec![];
+
+    println!("Analysing packets on {}", port.name().unwrap_or(String::from("<unknown>")));
+    for byte in port.bytes() {
+        let Ok(byte) = byte else {
+            if !buffer.is_empty() {
+                match packet::get_packet(&buffer) {
+                    Ok(packet) => println!("Valid packet: {packet:?}"),
+                    Err(err) => println!("Invalid packet, with error: {err}"),
+                }
+            }
+
+            buffer.clear();
+            continue
+        };
+        buffer.push(byte);
+    }
+}
+
 fn main() {
     let cli = Cli::parse();
 
     match cli.command {
+        Subcommands::Analysis(args) => args.parse(),
         Subcommands::Monitor(args) => args.parse(),
         Subcommands::List => {
             let ports = serialport::available_ports()
