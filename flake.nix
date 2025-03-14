@@ -45,6 +45,13 @@
               myHsPkgs.cabal-install
               myHsPkgs.haskell-language-server
 
+              # Rust subproject
+              pkgs.cargo
+              pkgs.rustc
+              # Required as we depend on libudev for tty iteration
+              pkgs.pkg-config
+              pkgs.udev
+
               # Idk
               ecpprog.defaultPackage.${system}
             ]
