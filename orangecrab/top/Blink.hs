@@ -9,6 +9,7 @@ import Clash.Cores.UART (ValidBaud)
 
 import Protocols
 import Protocols.Wishbone
+import Protocols.PacketStream
 import qualified Protocols.Df as Df
 
 import qualified Data.List as DL
@@ -18,80 +19,42 @@ import Domain
 import Pmod
 import Communication
 import Probes
+import Packet
 
 import RingBuffer
 
-ledController ::
+triggerReader ::
   (HiddenClockResetEnable dom) =>
-  Circuit
-    (CSignal dom (Index 4))
-    (Wishbone dom Standard (CLog 2 4) (Unsigned 8), CSignal dom (BitVector 8))
-ledController = Circuit exposeIn
-  where
-    exposeIn (fwdIn, (bwdIn, _)) = out
-      where
-        ledBuffer = register (0 :: Unsigned 8) $ mux acceptNew readFromBuffer ledBuffer
+  Circuit (CSignal dom (BitVector 4)) (CSignal dom Bool)
+triggerReader = Circuit exposeIn
+ where
+  exposeIn (incoming, _) = out
+   where
+    value = register False $ liftA2 newValue value incoming
 
-        acceptNew = acknowledge <$> bwdIn
-        readFromBuffer = readData <$> bwdIn
+    newValue _ 1 = True
+    newValue _ 2 = False
+    newValue old _ = old
 
-        transferBusy = register False $ invokeNew .||. (transferBusy .&&. not <$> acceptNew)
-        invokeNew = flip testBit 0 <$> fwdIn
+    out = (pure (), value)
 
-        makePacket = liftA2 (\addr sendReq -> WishboneM2S {
-            burstTypeExtension = LinearBurst,
-            cycleTypeIdentifier = Classic,
-            writeEnable = False,
-            strobe = sendReq,
-            busCycle = sendReq,
-            lock = False,
-            busSelect = 0,
-            writeData = 0,
-            addr = (flip clearBit) 0 $ bitCoerce addr
-          }) fwdIn transferBusy
-
-        out = (pure (), (makePacket, pack <$> ledBuffer))
-
-btnToIndex :: BitVector 4 -> Index 4
-btnToIndex 1 = 0
-btnToIndex 2 = 1
-btnToIndex 4 = 2
-btnToIndex 8 = 3
-btnToIndex _ = 0
-
-topLogic ::
-  forall dom .
+ps2df ::
   (HiddenClockResetEnable dom) =>
-  Signal dom PmodBTN -> Signal dom Pmod8LD
-topLogic btn = go
-  where
-    bufferBlank = ringBuffer d4 (69 :: Unsigned 8) (pure False)
+  Circuit (PacketStream dom 1 a) (Df dom (BitVector 8))
+ps2df = Circuit exposeIn
+ where
+  exposeIn (incoming, backpressure) = out
+   where
+    ack2bool :: Ack -> Bool
+    ack2bool (Ack b) = b
 
-    inserted :: Signal dom (Index 6)
-    inserted = register 0 $ flip (satAdd SatBound) 1 <$> inserted
+    conv Nothing = Df.NoData
+    conv (Just m2s) = Df.Data $ head $ _data m2s
 
-    buffer = bufferBlank $ (\i -> case i of
-      1 -> Just 3
-      2 -> Just 7
-      3 -> Just 15
-      4 -> Just 31
-      _ -> Nothing) <$> inserted
-    reader = ringBufferReaderWb buffer
-
-    testCir ::
-      (HiddenClockResetEnable dom) =>
-      (Fwd (CSignal dom (Index 4)), Bwd (CSignal dom (BitVector 8))) ->
-      (Bwd (CSignal dom (Index 4)), Fwd (CSignal dom (BitVector 8)))
-    Circuit testCir = circuit $ \input -> do
-      (wishM, sig) <- ledController -< input
-      reader -< wishM
-      idC -< sig
-
-    go = unpack <$> (snd $ testCir (btnToIndex . pack <$> btn, pure ()))
-
--- | How is this NOT a thing yet??
-ackToBool :: Ack -> Bool
-ackToBool (Ack v) = v
+    out = (
+        PacketStreamS2M . ack2bool <$> backpressure,
+        conv <$> incoming
+      )
 
 topLogicUart ::
   forall dom baud .
@@ -104,45 +67,30 @@ topLogicUart ::
   Signal dom Bit ->
   -- | TX
   Signal dom Bit
-topLogicUart baud buttons rx = go
+topLogicUart baud btns rx = go
  where
-  testSignal = register (0 :: BitVector 8) $ satAdd SatWrap 1 <$> testSignal
+  bufferBlank = ringBuffer d4 (69 :: Unsigned 8) (pure False)
 
-  ila = ilaCore (SNat @10) (pure True) (\s -> s == 58) (pure False) testSignal
+  inserted :: Signal dom (Index 6)
+  inserted = register 0 $ flip (satAdd SatBound) 1 <$> inserted
 
-  bufferCircuit ::
-    Circuit
-      (CSignal dom (Maybe (BitVector 8)))
-      (CSignal dom (Maybe (BitVector 8)))
-  bufferCircuit = Circuit exposeIn
-   where
-    exposeIn (idx, _) = out
-     where
-      valueValid = register False $ DM.isJust <$> idx
-      value = valueToChr <$> (fst . ila $ chrToIndex <$> idx)
+  buffer = bufferBlank $ (\i -> case i of
+    1 -> Just 65
+    2 -> Just 66
+    3 -> Just 67
+    4 -> Just 68
+    _ -> Nothing) <$> inserted
+  reader = ringBufferReaderPS buffer
 
-      valueToChr :: Maybe (BitVector 8) -> Maybe (BitVector 8)
-      valueToChr (Just v) = Just $ v
-      valueToChr Nothing = Nothing
-
-      chrToIndex :: Maybe (BitVector 8) -> Index 10
-      chrToIndex (Just v) = unpack . pack . resize $ satSub SatZero v 48
-      chrToIndex _ = 0
-
-      out = (
-          pure (),
-          mux valueValid
-            (value)
-            (pure Nothing)
-        )
-
-  Circuit main = circuit $ \rxBit -> do
-    (newIndex, txBit) <- uartDf baud -< (txBuffer, rxBit)
-    bufferValue <- bufferCircuit -< newIndex
-    txBuffer <- holdUntilAck -< bufferValue
+  Circuit main = circuit $ \(btns, rxBit) -> do
+    (_activation, txBit) <- uartDf baud -< (txByte, rxBit)
+    activeSignal <- triggerReader -< btns
+    bufferData <- reader -< activeSignal
+    packet <- dataPacket -< bufferData
+    txByte <- ps2df -< packet
     idC -< txBit
 
-  go = snd $ main (rx, pure ())
+  go = snd $ main ((btns, rx), pure ())
 
 topEntity ::
   "CLK" ::: Clock Dom48 ->
