@@ -40,24 +40,6 @@ triggerReader = Circuit exposeIn
 
     out = (pure (), value)
 
-ps2df ::
-  (HiddenClockResetEnable dom) =>
-  Circuit (PacketStream dom 1 a) (Df dom (BitVector 8))
-ps2df = Circuit exposeIn
- where
-  exposeIn (incoming, backpressure) = out
-   where
-    ack2bool :: Ack -> Bool
-    ack2bool (Ack b) = b
-
-    conv Nothing = Df.NoData
-    conv (Just m2s) = Df.Data $ head $ _data m2s
-
-    out = (
-        PacketStreamS2M . ack2bool <$> backpressure,
-        conv <$> incoming
-      )
-
 topLogicUart ::
   forall dom baud .
   (HiddenClockResetEnable dom, ValidBaud dom baud) =>
@@ -71,7 +53,7 @@ topLogicUart ::
   Signal dom Bit
 topLogicUart baud btns rx = go
  where
-  bufferBlank = ringBuffer d4 (69 :: Unsigned 8) (pure False)
+  bufferBlank = ringBuffer d4 (69 :: Unsigned 12) (pure False)
 
   inserted :: Signal dom (Index 6)
   inserted = register 0 $ flip (satAdd SatBound) 1 <$> inserted
@@ -88,7 +70,7 @@ topLogicUart baud btns rx = go
     (_activation, txBit) <- uartDf baud -< (txByte, rxBit)
     activeSignal <- triggerReader -< btns
     bufferData <- reader -< activeSignal
-    packet <- dataPacket (Proxy :: Proxy (BitVector 8)) -< bufferData
+    packet <- dataPacket (Proxy :: Proxy (BitVector 12)) -< bufferData
     txByte <- ps2df -< packet
     idC -< txBit
 
