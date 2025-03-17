@@ -1,4 +1,5 @@
 {-# OPTIONS_GHC -fplugin=Protocols.Plugin #-}
+{-# OPTIONS_GHC -fconstraint-solver-iterations=10 #-}
 
 module Blink where
 
@@ -53,24 +54,17 @@ topLogicUart ::
   Signal dom Bit
 topLogicUart baud btns rx = go
  where
-  bufferBlank = ringBuffer d4 (69 :: Unsigned 12) (pure False)
+  counter :: (HiddenClockResetEnable dom) => Signal dom (BitVector 9)
+  counter = register 0 $ satAdd SatWrap 1 <$> counter
 
-  inserted :: Signal dom (Index 6)
-  inserted = register 0 $ flip (satAdd SatBound) 1 <$> inserted
-
-  buffer = bufferBlank $ (\i -> case i of
-    1 -> Just 65
-    2 -> Just 66
-    3 -> Just 67
-    4 -> Just 68
-    _ -> Nothing) <$> inserted
-  reader = ringBufferReaderPS buffer
+  ila = ilaCore d6 (pure True) (==20) (pure False) counter
+  reader = ringBufferReaderPS ila
 
   Circuit main = circuit $ \(btns, rxBit) -> do
     (_activation, txBit) <- uartDf baud -< (txByte, rxBit)
     activeSignal <- triggerReader -< btns
     bufferData <- reader -< activeSignal
-    packet <- dataPacket (Proxy :: Proxy (BitVector 12)) -< bufferData
+    packet <- dataPacket (Proxy :: Proxy (BitVector 9)) -< bufferData
     txByte <- ps2df -< packet
     idC -< txBit
 
