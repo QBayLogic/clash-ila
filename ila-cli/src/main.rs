@@ -122,14 +122,27 @@ fn packet_analysis(port: Box<dyn SerialPort>, args: AnalysisArgs) {
     println!("Analysing packets on {}", port.name().unwrap_or(String::from("<unknown>")));
     for byte in port.bytes() {
         let Ok(byte) = byte else {
-            if !buffer.is_empty() {
-                match packet::get_packet(&buffer) {
-                    Ok(packet) => println!("Valid packet: {packet:?}"),
-                    Err(err) => println!("Invalid packet, with error: {err}"),
-                }
-            }
+            if buffer.is_empty() { continue; }
 
-            buffer.clear();
+            match packet::get_packet(&buffer) {
+                Ok((packet, leftover)) => {
+                    println!("Valid packet: {packet:?}");
+                    buffer = buffer[(buffer.len() - leftover)..].to_vec();
+                },
+                Err(err) => {
+                    match err {
+                        packet::ParseErr::NeedsMoreBytes => (),
+                        packet::ParseErr::InvalidType => {
+                            println!("Invalid packet type, unknown when next valid packet will be parsed");
+                            buffer.clear();
+                        },
+                        packet::ParseErr::UnsupportedVersion => {
+                            println!("Invalid packet version, unknown when next valid packet will be parsed");
+                            buffer.clear();
+                        }
+                    }
+                },
+            }
             continue
         };
         buffer.push(byte);

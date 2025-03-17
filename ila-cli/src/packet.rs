@@ -28,6 +28,13 @@ impl ByteIterReads for std::slice::Iter<'_, u8> {
     }
 }
 
+#[derive(Debug, PartialEq, Eq)]
+pub enum ParseErr {
+    NeedsMoreBytes,
+    InvalidType,
+    UnsupportedVersion,
+}
+
 /// A 'raw' data packet, used internally to represent the data packet as-recieved, without any
 /// processing done to it.
 #[derive(Debug)]
@@ -43,20 +50,22 @@ struct RawDataPacket {
 }
 
 impl RawDataPacket {
-    fn new(data: &[u8]) -> Result<RawDataPacket, &'static str> {
+    fn new(data: &[u8]) -> Result<(RawDataPacket, usize), ParseErr> {
         let mut iter = data.iter();
+        let version = iter.next_u16().ok_or(ParseErr::NeedsMoreBytes)?;
+        if version != 0x0001 { return Err(ParseErr::UnsupportedVersion); }
+
         let mut raw_packet = RawDataPacket {
-            id: iter.next_u16().ok_or("Invalid data packet; missing id")?,
-            width: iter.next_u16().ok_or("Invalid data packet; missing width")?,
-            length: iter.next_u32().ok_or("Invalid data packet; missing length")?,
+            id: iter.next_u16().ok_or(ParseErr::NeedsMoreBytes)?,
+            width: iter.next_u16().ok_or(ParseErr::NeedsMoreBytes)?,
+            length: iter.next_u32().ok_or(ParseErr::NeedsMoreBytes)?,
             buffer: vec![],
         };
         for _ in 0..raw_packet.length {
-            let byte = iter.next_u8().ok_or("Invalid data packet; too little data")?;
+            let byte = iter.next_u8().ok_or(ParseErr::NeedsMoreBytes)?;
             raw_packet.buffer.push(byte);
         }
-
-        Ok(raw_packet)
+        Ok((raw_packet, iter.len()))
     }
 }
 
@@ -93,16 +102,18 @@ pub enum Packets {
 }
 
 /// Attempt to parse the input data as any form of packet, depending on the packet type ID
-pub fn get_packet(data: &Vec<u8>) -> Result<Packets, &'static str> {
+pub fn get_packet(data: &Vec<u8>) -> Result<(Packets, usize), ParseErr> {
     if data.len() < 2 {
-        return Err("Packet header too small")
+        return Err(ParseErr::NeedsMoreBytes)
     }
 
     match (data[0] as u16) << 8 + data[1] as u16 {
-        0x0000 => Ok(
-            Packets::Data(RawDataPacket::new(&data[2..])?.into())
-        ),
-        _ => Err("Invalid packet type")
+        0x0000 => {
+            let input_data = &data[2..];
+            let (packet, leftover) = RawDataPacket::new(input_data)?;
+            Ok((Packets::Data(packet.into()), leftover))
+        },
+        _ => Err(ParseErr::InvalidType)
     }
 }
 
