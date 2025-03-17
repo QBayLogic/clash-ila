@@ -90,7 +90,7 @@ impl Into<DataPacket> for RawDataPacket {
         DataPacket {
             id: self.id,
             width: self.width,
-            buffer: self.buffer.chunks((self.width / 8).into())
+            buffer: self.buffer.chunks(self.width.div_ceil(8).into())
                 .map(|s| s.to_vec())
                 .collect()
         }
