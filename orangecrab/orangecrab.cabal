@@ -60,6 +60,7 @@ common common-options
     clash-cores,
     clash-lib,
     clash-prelude,
+    clash-prelude-hedgehog,
     clash-protocols,
     ghc-typelits-natnormalise,
     ghc-typelits-extra,

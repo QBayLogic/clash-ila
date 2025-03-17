@@ -9,6 +9,9 @@ package clash-prelude
 package clash-protocols
   ghc-options: +RTS -qn8 -A64M -RTS -j8
 
+package clash-prelude-hedgehog
+  ghc-options: +RTS -qn8 -A64M -RTS -j8
+
 package clash-protocols-base
   ghc-options: +RTS -qn8 -A64M -RTS -j8
 
