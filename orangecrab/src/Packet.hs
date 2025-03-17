@@ -16,14 +16,22 @@ import Data.Proxy
 
 -- ILA packet structures
 --
+-- Shared in every packet;
+-- Size (in bytes): | 4 | 2 |
+-- Type:            | P | T |
+-- Description:
+--   P: Preamble, used to find new packets if an error has accured, should always be `0xea88eacd`
+--   T: Packet type
+--
+--
 -- # ILA Data Packet
 -- Version 1
 --
--- Size (in bytes): | 2 | 2 | 2 | 2 | 4 | ... |
--- type:            | T | V | I | W | L |  D  |
+-- Size (in bytes): | 2 | 2 | 2 | 4 | ... |
+-- Type:            | V | I | W | L |  D  |
+-- Packet type: 0x0001
 -- Description:
---   T: Packet type, for this type it should be `0x0000`
---   V: Version number, for this version it should be `0x00000001`
+--   V: Version number, for this version it should be `0x0001`
 --   I: Data ID, an identifier for the Clash `signal` being sampled
 --   W: Data width, specifies the width of the data in bits, note that data MUST be byte aligned
 --   L: Length of the data stream in bytes
@@ -34,6 +42,7 @@ import Data.Proxy
 --  which ILAs.
 
 data IlaDataPacket = IlaDataPacket {
+  _preamble :: BitVector 32,
   _type :: BitVector 16,
   _version :: BitVector 16,
   _id :: BitVector 16,
@@ -60,6 +69,7 @@ dataPacket _ = packetizerC metaTransfer headerTransfer
  where
   metaTransfer _ = ()
   headerTransfer oldMeta = IlaDataPacket {
+      _preamble = 0xea88eacd,
       _type = 0x0000,
       _version = 0x0001,
       _id = 0x0000,

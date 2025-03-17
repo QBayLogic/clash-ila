@@ -133,13 +133,29 @@ fn packet_analysis(port: Box<dyn SerialPort>, args: AnalysisArgs) {
                     match err {
                         packet::ParseErr::NeedsMoreBytes => (),
                         packet::ParseErr::InvalidType => {
-                            println!("Invalid packet type, unknown when next valid packet will be parsed");
-                            buffer.clear();
+                            let pos = packet::find_preamble(&buffer);
+                            match pos {
+                                Some(p) => buffer = buffer[p..].to_vec(),
+                                None => buffer.clear(),
+                            }
                         },
                         packet::ParseErr::UnsupportedVersion => {
-                            println!("Invalid packet version, unknown when next valid packet will be parsed");
-                            buffer.clear();
-                        }
+                            let pos = packet::find_preamble(&buffer);
+                            match pos {
+                                Some(p) => buffer = buffer[p..].to_vec(),
+                                None => buffer.clear(),
+                            }
+                        },
+                        packet::ParseErr::NoPreamble => {
+                            let pos = packet::find_preamble(&buffer);
+                            match pos {
+                                Some(p) => buffer = buffer[p..].to_vec(),
+                                None => buffer.clear(),
+                            }
+                        },
+                        packet::ParseErr::InvalidPreamblePlacement(p) => {
+                            buffer = buffer[p..].to_vec();
+                        },
                     }
                 },
             }

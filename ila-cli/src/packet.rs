@@ -33,6 +33,8 @@ pub enum ParseErr {
     NeedsMoreBytes,
     InvalidType,
     UnsupportedVersion,
+    NoPreamble,
+    InvalidPreamblePlacement(usize),
 }
 
 /// A 'raw' data packet, used internally to represent the data packet as-recieved, without any
@@ -101,15 +103,25 @@ pub enum Packets {
     Data(DataPacket)
 }
 
+/// Find the packet preamble in a stream bytes and return its position
+pub fn find_preamble(data: &Vec<u8>) -> Option<usize> {
+    data.windows(4).position(|seq| seq == [0xea, 0x88, 0xea, 0xcd])
+}
+
 /// Attempt to parse the input data as any form of packet, depending on the packet type ID
 pub fn get_packet(data: &Vec<u8>) -> Result<(Packets, usize), ParseErr> {
-    if data.len() < 2 {
+    if data.len() < 6 {
         return Err(ParseErr::NeedsMoreBytes)
     }
+    match find_preamble(data) {
+        Some(0) => (),
+        Some(p) => return Err(ParseErr::InvalidPreamblePlacement(p)),
+        None => return Err(ParseErr::NoPreamble),
+    }
 
-    match (data[0] as u16) << 8 + data[1] as u16 {
+    let input_data = &data[6..];
+    match (data[4] as u16) << 8 + data[5] as u16 {
         0x0000 => {
-            let input_data = &data[2..];
             let (packet, leftover) = RawDataPacket::new(input_data)?;
             Ok((Packets::Data(packet.into()), leftover))
         },
