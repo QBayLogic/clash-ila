@@ -48,7 +48,7 @@ data IlaDataPacket = IlaDataPacket {
   _id :: BitVector 16,
   _width :: BitVector 16,
   _length :: BitVector 32
-} deriving(Generic, NFDataX, BitPack)
+} deriving(Generic, NFDataX, BitPack, Eq, Show)
 
 -- | Construct a data packet from a stream of raw data
 dataPacket ::

@@ -57,6 +57,7 @@ common common-options
   build-depends:
     base,
     hedgehog >= 1.0.3 && < 1.6,
+    split,
     clash-cores,
     clash-lib,
     clash-prelude,
@@ -85,6 +86,7 @@ test-suite unittests
   main-is: Tests.hs
   other-modules:
     Tests.RingBuffer
+    Tests.Packet
   build-depends:
     orangecrab
 
