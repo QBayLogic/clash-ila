@@ -6,13 +6,22 @@ use crate::packet::*;
 type VcdWriter = vcd::Writer<std::io::BufWriter<std::fs::File>>;
 type VcdBitVec = Vec<VcdValue>;
 
+/// An internal structure used to better represent signals for the VCD writer
 struct VcdSignal {
+    /// Wire definition, used as a handle to write to the file
     wire: IdCode,
+    /// A bit vector consisting of unknowns, used in the wire definition and at the end of the
+    /// signal if the signal is shorter than others
     unknown: VcdBitVec,
+    /// The actual measured values
     data: Vec<VcdBitVec>,
 }
 
 impl VcdSignal {
+    /// Convert between a regular DataPacket into a VcdSignal
+    ///
+    /// Sadly this function cannot be implemented using `Into` because it will directly write the
+    /// signal definition to the file.
     fn from_vcd(vcd_writer: &mut VcdWriter, signal: &DataPacket) -> IoResult<VcdSignal> {
         let wire =
             vcd_writer.add_wire(signal.width.into(), format!("sig_{}", signal.id).as_str())?;
@@ -33,6 +42,11 @@ impl VcdSignal {
     }
 }
 
+/// Write the measured data to a VCD file
+///
+/// * `signals` - Each signal measured, encoded as a `DataPacket`s
+/// * `identifier` - The collective name of the signals
+/// * `path` - Path to the write to write too, will overwrite any file already in place
 pub fn write_to_vcd<P: AsRef<Path>>(
     signals: &Vec<DataPacket>,
     identifier: &str,
