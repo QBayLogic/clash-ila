@@ -129,7 +129,7 @@ fn packet_analysis(port: Box<dyn SerialPort>, args: AnalysisArgs) {
                 Ok((packet, leftover)) => {
 
                     match packet {
-                        packet::Packets::Data(data_packet) => vcd::write_to_vcd(vec![data_packet]).expect("oopsie")
+                        packet::Packets::Data(data_packet) => vcd::write_to_vcd(&vec![data_packet], "toplevel", "demo.vcd").expect("oopsie")
                     }
 
                     //println!("Valid packet: {packet:?}");

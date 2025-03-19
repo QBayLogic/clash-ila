@@ -1,72 +1,86 @@
 
-use vcd;
-use bitvec::prelude::*;
+use vcd::{IdCode, Value as VcdValue, SimulationCommand};
+use std::{io::Result as IoResult, path::Path};
 
 use crate::packet::*;
 
-pub fn write_to_vcd(signals: Vec<DataPacket>) -> std::io::Result<()> {
-    type VcdBitVec = Vec<vcd::Value>;
+type VcdWriter = vcd::Writer<std::io::BufWriter<std::fs::File>>;
+type VcdBitVec = Vec<VcdValue>;
 
-    struct VcdData {
-        wire: vcd::IdCode,
-        init: VcdBitVec,
-        data: Vec<VcdBitVec>
+struct VcdSignal {
+    wire: IdCode,
+    unknown: VcdBitVec,
+    data: Vec<VcdBitVec>
+}
+
+impl VcdSignal {
+    fn from_vcd(vcd_writer: &mut VcdWriter, signal: &DataPacket) -> IoResult<VcdSignal> {
+        let wire = vcd_writer.add_wire(
+            signal.width.into(),
+            format!("sig_{}", signal.id).as_str()
+        )?;
+
+        Ok(VcdSignal {
+            wire,
+            unknown: vec![VcdValue::X; signal.width.into()],
+            data: signal.buffer.iter()
+                .map(|v| v.iter()
+                    .map(|b| b.then_some(VcdValue::V1).unwrap_or(VcdValue::V0))
+                    .collect()
+                )
+                .collect()
+        })
     }
+}
 
-    fn into_bv(vec: BitVec<u8, Msb0>) -> VcdBitVec {
-        vec.iter()
-            .map(|b| if *b { vcd::Value::V1 } else { vcd::Value::V0 })
-            .collect()
-    }
-
-    let sample_count = signals[0].buffer.len();
-
+pub fn write_to_vcd<P: AsRef<Path>>(signals: &Vec<DataPacket>, identifier: &str, path: P) -> IoResult<()> {
     let file = std::fs::File::options()
         .read(true)
         .write(true)
         .create(true)
         .truncate(true)
-        .open("demo.vcd")?;
-    let w = std::io::BufWriter::new(file);
+        .open(path)?;
+    let mut vcd_writer = vcd::Writer::new(
+            std::io::BufWriter::new(file)
+        );
 
-    let mut vcd_writer = vcd::Writer::new(w);
-
+    // Header
     vcd_writer.timescale(1, vcd::TimescaleUnit::US)?;
-    vcd_writer.add_module("toplevel")?;
-    let wires: Vec<VcdData> = signals.into_iter().filter_map(|signal| {
-        let wire = vcd_writer.add_wire(
-            signal.width.into(),
-            format!("sig_{}", signal.id).as_str()
-        ).ok()?;
-
-        Some(VcdData {
-            wire,
-            init: vec![vcd::Value::X; signal.width.into()],
-            data: signal.buffer.into_iter()
-                .map(into_bv)
-                .collect()
-        })
-    }).collect();
+    vcd_writer.add_module(identifier)?;
+    let wires: Vec<VcdSignal> = signals.iter().filter_map(|signal|
+        VcdSignal::from_vcd(&mut vcd_writer, signal).ok()
+    ).collect();
     vcd_writer.upscope()?;
     vcd_writer.enddefinitions()?;
 
-    vcd_writer.begin(vcd::SimulationCommand::Dumpvars)?;
+    // Initialize all variables to unknown
+    vcd_writer.begin(SimulationCommand::Dumpvars)?;
     for wire in &wires {
-        vcd_writer.change_vector(wire.wire, wire.init.clone())?;
+        vcd_writer.change_vector(wire.wire, wire.unknown.clone())?;
     }
     vcd_writer.end()?;
 
-    for t in 0..sample_count {
+    // Actual change value part
+    let max_sample_count = signals
+        .iter()
+        .map(|b| b.buffer.len())
+        .max()
+        .ok_or(std::io::ErrorKind::InvalidData)?;
+
+    for t in 0..max_sample_count {
         vcd_writer.timestamp(t as u64)?;
 
         for signal in &wires {
-            vcd_writer.change_vector(signal.wire, signal.data[t].clone())?;
+            let current_vector = signal.data.get(t)
+                .unwrap_or(&signal.unknown)
+                .to_owned();
+            vcd_writer.change_vector(signal.wire, current_vector)?;
         }
     }
-    vcd_writer.timestamp(sample_count as u64)?;
+    vcd_writer.timestamp(max_sample_count as u64)?;
 
+    // Ensure any unwritten data is flushed
     vcd_writer.flush()?;
-
     Ok(())
 }
 
