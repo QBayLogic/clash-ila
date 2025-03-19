@@ -1,24 +1,18 @@
-
 module Tests.Packet where
 
-import Clash.Prelude
-
-import Hedgehog
-import qualified Hedgehog.Gen as Gen
-import qualified Hedgehog.Range as Range
-
-import qualified Data.List as DL
-import qualified Data.Maybe as DM
-import qualified Data.Data as DD
-import qualified Data.List.Split as DLS
-
-import Clash.Sized.Vector (unsafeFromList)
 import Clash.Hedgehog.Sized.Unsigned (genUnsigned)
-
+import Clash.Prelude
+import Clash.Sized.Vector (unsafeFromList)
+import Data.Data qualified as DD
+import Data.List qualified as DL
+import Data.List.Split qualified as DLS
+import Data.Maybe qualified as DM
+import Hedgehog
+import Hedgehog.Gen qualified as Gen
+import Hedgehog.Range qualified as Range
+import Packet
 import Protocols
 import Protocols.PacketStream
-
-import Packet
 
 splitIntoBytes :: (BitPack a) => a -> Vec (BitSize a `DivRU` 8) (BitVector 8)
 splitIntoBytes bv = unpack . resize $ pack bv
@@ -131,9 +125,8 @@ structureProperty = property $ do
     Gen.list (Range.linear 0 24) (genUnsigned @9 $ Range.linear 0 500)
 
   let toSimulate = withClockResetEnable systemClockGen systemResetGen enableGen
-  let simOptions = def { resetCycles = 1, ignoreReset = False }
+  let simOptions = def {resetCycles = 1, ignoreReset = False}
   let expected = dataPackedModel input
   let simulated = DL.take (DL.length expected) $ simulateC (toSimulate dataPacket (DD.Proxy :: DD.Proxy (Unsigned 9))) simOptions (testbenchDataPacket @25 input)
 
   simulated === expected
-

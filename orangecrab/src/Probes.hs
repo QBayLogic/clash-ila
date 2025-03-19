@@ -1,11 +1,11 @@
-
 module Probes where
 
 import Clash.Prelude
 import RingBuffer
 
 ilaCore ::
-  forall dom size a . (HiddenClockResetEnable dom, NFDataX a, Eq a, KnownNat size, 1 <= size) =>
+  forall dom size a.
+  (HiddenClockResetEnable dom, NFDataX a, Eq a, KnownNat size, 1 <= size) =>
   SNat size ->
   -- | Capture
   Signal dom Bool ->
@@ -31,4 +31,3 @@ ilaCore size capture trigger triggerRst i = record
     buffer = ringBuffer size undefined triggerRst (mux shouldSample (Just <$> i) (pure Nothing))
 
     record = buffer
-
