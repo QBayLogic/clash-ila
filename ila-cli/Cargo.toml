@@ -7,3 +7,4 @@ edition = "2021"
 bitvec = "1.0.1"
 clap = { version = "4.5.32", features = ["derive"] }
 serialport = "4.7.0"
+vcd = "0.7.0"

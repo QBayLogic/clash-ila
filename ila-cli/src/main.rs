@@ -6,6 +6,7 @@ use clap::{Parser, Args, Subcommand};
 use serialport::SerialPort;
 
 mod packet;
+mod vcd;
 
 #[derive(Parser, Debug)]
 #[command(version, about)]
@@ -126,7 +127,12 @@ fn packet_analysis(port: Box<dyn SerialPort>, args: AnalysisArgs) {
 
             match packet::get_packet(&buffer) {
                 Ok((packet, leftover)) => {
-                    println!("Valid packet: {packet:?}");
+
+                    match packet {
+                        packet::Packets::Data(data_packet) => vcd::write_to_vcd(vec![data_packet]).expect("oopsie")
+                    }
+
+                    //println!("Valid packet: {packet:?}");
                     buffer = buffer[(buffer.len() - leftover)..].to_vec();
                 },
                 Err(err) => {
