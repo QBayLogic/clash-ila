@@ -1,4 +1,3 @@
-
 use bitvec::prelude::*;
 
 /// A utility trait, only implemented for iterators over a `u8`'s
@@ -50,14 +49,16 @@ struct RawDataPacket {
     /// How many samples this transaction contained
     length: u32,
     /// The samples themselves, in chunks of bytes
-    buffer: Vec<u8>
+    buffer: Vec<u8>,
 }
 
 impl RawDataPacket {
     fn new(data: &[u8]) -> Result<(RawDataPacket, usize), ParseErr> {
         let mut iter = data.iter();
         let version = iter.next_u16().ok_or(ParseErr::NeedsMoreBytes)?;
-        if version != 0x0001 { return Err(ParseErr::UnsupportedVersion); }
+        if version != 0x0001 {
+            return Err(ParseErr::UnsupportedVersion);
+        }
 
         let mut raw_packet = RawDataPacket {
             id: iter.next_u16().ok_or(ParseErr::NeedsMoreBytes)?,
@@ -84,7 +85,7 @@ pub struct DataPacket {
     /// this number can be used to truncate to the actual bit width
     pub width: u16,
     /// The samples themselves, each sample is split into a vector of `width_byte` bytes
-    pub buffer: Vec<BitVec<u8, Msb0>>
+    pub buffer: Vec<BitVec<u8, Msb0>>,
 }
 
 impl Into<DataPacket> for RawDataPacket {
@@ -92,12 +93,16 @@ impl Into<DataPacket> for RawDataPacket {
         DataPacket {
             id: self.id,
             width: self.width,
-            buffer: self.buffer.chunks(self.width.div_ceil(8).into())
-                .map(|v| v.view_bits::<Msb0>()
-                    .iter()
-                    .skip(v.len() * 8 - self.width as usize)
-                    .collect())
-                .collect()
+            buffer: self
+                .buffer
+                .chunks(self.width.div_ceil(8).into())
+                .map(|v| {
+                    v.view_bits::<Msb0>()
+                        .iter()
+                        .skip(v.len() * 8 - self.width as usize)
+                        .collect()
+                })
+                .collect(),
         }
     }
 }
@@ -105,18 +110,19 @@ impl Into<DataPacket> for RawDataPacket {
 /// All possible parsable packets
 #[derive(Debug)]
 pub enum Packets {
-    Data(DataPacket)
+    Data(DataPacket),
 }
 
 /// Find the packet preamble in a stream bytes and return its position
 pub fn find_preamble(data: &Vec<u8>) -> Option<usize> {
-    data.windows(4).position(|seq| seq == [0xea, 0x88, 0xea, 0xcd])
+    data.windows(4)
+        .position(|seq| seq == [0xea, 0x88, 0xea, 0xcd])
 }
 
 /// Attempt to parse the input data as any form of packet, depending on the packet type ID
 pub fn get_packet(data: &Vec<u8>) -> Result<(Packets, usize), ParseErr> {
     if data.len() < 6 {
-        return Err(ParseErr::NeedsMoreBytes)
+        return Err(ParseErr::NeedsMoreBytes);
     }
     match find_preamble(data) {
         Some(0) => (),
@@ -129,8 +135,7 @@ pub fn get_packet(data: &Vec<u8>) -> Result<(Packets, usize), ParseErr> {
         0x0000 => {
             let (packet, leftover) = RawDataPacket::new(input_data)?;
             Ok((Packets::Data(packet.into()), leftover))
-        },
-        _ => Err(ParseErr::InvalidType)
+        }
+        _ => Err(ParseErr::InvalidType),
     }
 }
-

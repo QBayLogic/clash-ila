@@ -1,8 +1,7 @@
-
-use std::path::PathBuf;
 use std::io::{Read, Write};
+use std::path::PathBuf;
 
-use clap::{Parser, Args, Subcommand};
+use clap::{Args, Parser, Subcommand};
 use serialport::SerialPort;
 
 mod packet;
@@ -23,7 +22,7 @@ enum Subcommands {
     /// Monitor output of the port, all data is displayed in hex
     Monitor(MonitorArgs),
     /// Lists all serial ports available
-    List
+    List,
 }
 
 trait ParseSubcommand {
@@ -38,10 +37,20 @@ struct MonitorArgs {
     #[arg(short, long, default_value_t = 9600, help = "Sets baud rate")]
     baud: u32,
 
-    #[arg(short = 'l', long = "line", default_value_t = 16, help = "Amount of bytes displayed per line")]
+    #[arg(
+        short = 'l',
+        long = "line",
+        default_value_t = 16,
+        help = "Amount of bytes displayed per line"
+    )]
     max_per_line: u32,
 
-    #[arg(short = 's', long = "space", default_value_t = 2, help = "Amount of bytes displayed per space")]
+    #[arg(
+        short = 's',
+        long = "space",
+        default_value_t = 2,
+        help = "Amount of bytes displayed per space"
+    )]
     max_per_space: u32,
 }
 
@@ -55,16 +64,16 @@ struct AnalysisArgs {
 }
 
 fn find_specified_port(check: &PathBuf, baud: u32) -> Box<dyn SerialPort> {
-    let ports = serialport::available_ports()
-        .expect("Unable to iterate serial devices. Exiting.");
+    let ports = serialport::available_ports().expect("Unable to iterate serial devices. Exiting.");
 
-    let canon = check.as_path()
+    let canon = check
+        .as_path()
         .canonicalize()
         .expect("Invalid path provided");
-    let check_path = canon.as_os_str()
-        .to_string_lossy();
-    
-    let valid_port = ports.into_iter()
+    let check_path = canon.as_os_str().to_string_lossy();
+
+    let valid_port = ports
+        .into_iter()
         .find(|port| port.port_name == check_path)
         .expect("Provided path is not a valid serial port.");
 
@@ -91,7 +100,10 @@ fn monitor_port(port: Box<dyn SerialPort>, args: MonitorArgs) {
     let mut addr = 0;
     let mut wrote = 0;
 
-    println!("Monitoring on {}", port.name().unwrap_or(String::from("<unknown>")));
+    println!(
+        "Monitoring on {}",
+        port.name().unwrap_or(String::from("<unknown>"))
+    );
     for byte in port.bytes() {
         let Ok(byte) = byte else { continue };
 
@@ -120,52 +132,57 @@ fn monitor_port(port: Box<dyn SerialPort>, args: MonitorArgs) {
 fn packet_analysis(port: Box<dyn SerialPort>, args: AnalysisArgs) {
     let mut buffer: Vec<u8> = vec![];
 
-    println!("Analysing packets on {}", port.name().unwrap_or(String::from("<unknown>")));
+    println!(
+        "Analysing packets on {}",
+        port.name().unwrap_or(String::from("<unknown>"))
+    );
     for byte in port.bytes() {
         let Ok(byte) = byte else {
-            if buffer.is_empty() { continue; }
+            if buffer.is_empty() {
+                continue;
+            }
 
             match packet::get_packet(&buffer) {
                 Ok((packet, leftover)) => {
-
                     match packet {
-                        packet::Packets::Data(data_packet) => vcd::write_to_vcd(&vec![data_packet], "toplevel", "demo.vcd").expect("oopsie")
+                        packet::Packets::Data(data_packet) => {
+                            vcd::write_to_vcd(&vec![data_packet], "toplevel", "demo.vcd")
+                                .expect("oopsie")
+                        }
                     }
 
                     //println!("Valid packet: {packet:?}");
                     buffer = buffer[(buffer.len() - leftover)..].to_vec();
-                },
-                Err(err) => {
-                    match err {
-                        packet::ParseErr::NeedsMoreBytes => (),
-                        packet::ParseErr::InvalidType => {
-                            let pos = packet::find_preamble(&buffer);
-                            match pos {
-                                Some(p) => buffer = buffer[p..].to_vec(),
-                                None => buffer.clear(),
-                            }
-                        },
-                        packet::ParseErr::UnsupportedVersion => {
-                            let pos = packet::find_preamble(&buffer);
-                            match pos {
-                                Some(p) => buffer = buffer[p..].to_vec(),
-                                None => buffer.clear(),
-                            }
-                        },
-                        packet::ParseErr::NoPreamble => {
-                            let pos = packet::find_preamble(&buffer);
-                            match pos {
-                                Some(p) => buffer = buffer[p..].to_vec(),
-                                None => buffer.clear(),
-                            }
-                        },
-                        packet::ParseErr::InvalidPreamblePlacement(p) => {
-                            buffer = buffer[p..].to_vec();
-                        },
+                }
+                Err(err) => match err {
+                    packet::ParseErr::NeedsMoreBytes => (),
+                    packet::ParseErr::InvalidType => {
+                        let pos = packet::find_preamble(&buffer);
+                        match pos {
+                            Some(p) => buffer = buffer[p..].to_vec(),
+                            None => buffer.clear(),
+                        }
+                    }
+                    packet::ParseErr::UnsupportedVersion => {
+                        let pos = packet::find_preamble(&buffer);
+                        match pos {
+                            Some(p) => buffer = buffer[p..].to_vec(),
+                            None => buffer.clear(),
+                        }
+                    }
+                    packet::ParseErr::NoPreamble => {
+                        let pos = packet::find_preamble(&buffer);
+                        match pos {
+                            Some(p) => buffer = buffer[p..].to_vec(),
+                            None => buffer.clear(),
+                        }
+                    }
+                    packet::ParseErr::InvalidPreamblePlacement(p) => {
+                        buffer = buffer[p..].to_vec();
                     }
                 },
             }
-            continue
+            continue;
         };
         buffer.push(byte);
     }
@@ -178,8 +195,8 @@ fn main() {
         Subcommands::Analysis(args) => args.parse(),
         Subcommands::Monitor(args) => args.parse(),
         Subcommands::List => {
-            let ports = serialport::available_ports()
-                .expect("Unable to iterate serial devices. Exiting.");
+            let ports =
+                serialport::available_ports().expect("Unable to iterate serial devices. Exiting.");
 
             println!("Available ports:");
             for port in ports {
@@ -189,4 +206,3 @@ fn main() {
         }
     }
 }
-
