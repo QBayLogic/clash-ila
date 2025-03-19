@@ -1,3 +1,7 @@
+{-# LANGUAGE OverloadedRecordDot #-}
+{-# LANGUAGE DuplicateRecordFields #-}
+{-# LANGUAGE NoFieldSelectors #-}
+
 module Packet where
 
 import Clash.Prelude
@@ -35,12 +39,12 @@ import Protocols.PacketStream
 --  which ILAs.
 
 data IlaDataPacket = IlaDataPacket
-  { _preamble :: BitVector 32,
-    _type :: BitVector 16,
-    _version :: BitVector 16,
-    _id :: BitVector 16,
-    _width :: BitVector 16,
-    _length :: BitVector 32
+  { preamble :: BitVector 32,
+    kind :: BitVector 16,
+    version :: BitVector 16,
+    id :: BitVector 16,
+    width :: BitVector 16,
+    length :: BitVector 32
   }
   deriving (Generic, NFDataX, BitPack, Eq, Show)
 
@@ -64,12 +68,12 @@ dataPacket _ = packetizerC metaTransfer headerTransfer
     metaTransfer _ = ()
     headerTransfer oldMeta =
       IlaDataPacket
-        { _preamble = 0xea88eacd,
-          _type = 0x0000,
-          _version = 0x0001,
-          _id = 0x0000,
-          _width = natToNum @(BitSize t),
-          _length = (natToNum @(BitSize t `DivRU` 8)) * (resize $ pack oldMeta)
+        { preamble = 0xea88eacd,
+          kind = 0x0000,
+          version = 0x0001,
+          id = 0x0000,
+          width = natToNum @(BitSize t),
+          length = (natToNum @(BitSize t `DivRU` 8)) * (resize $ pack oldMeta)
         }
 
 -- | Converts `PacketStream` into a `Df` of bytes. For packet stream data larger than one byte,
