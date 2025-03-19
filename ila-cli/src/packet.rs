@@ -1,4 +1,6 @@
 
+use bitvec::prelude::*;
+
 /// A utility trait, only implemented for iterators over a `u8`'s
 ///
 /// Used to retrieve multiple bytes from an iterator at once with ease
@@ -77,12 +79,12 @@ impl RawDataPacket {
 #[derive(Debug)]
 pub struct DataPacket {
     /// The Clash signal ID
-    id: u16,
+    pub id: u16,
     /// How many bit width of the signal, mostly relevant for signals which are not byte aligned,
     /// this number can be used to truncate to the actual bit width
-    width: u16,
+    pub width: u16,
     /// The samples themselves, each sample is split into a vector of `width_byte` bytes
-    buffer: Vec<Vec<u8>>
+    pub buffer: Vec<BitVec<u8, Msb0>>
 }
 
 impl Into<DataPacket> for RawDataPacket {
@@ -91,7 +93,10 @@ impl Into<DataPacket> for RawDataPacket {
             id: self.id,
             width: self.width,
             buffer: self.buffer.chunks(self.width.div_ceil(8).into())
-                .map(|s| s.to_vec())
+                .map(|v| v.view_bits::<Msb0>()
+                    .iter()
+                    .skip(v.len() * 8 - self.width as usize)
+                    .collect())
                 .collect()
         }
     }
