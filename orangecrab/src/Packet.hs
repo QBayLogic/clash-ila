@@ -11,7 +11,10 @@ import Protocols
 import Protocols.Df qualified as Df
 import Protocols.PacketStream
 
--- ILA packet structures
+class IlaPacketType a where
+  kind :: a -> BitVector 16
+
+-- | Common ILA packet structure
 --
 -- Shared in every packet;
 -- Size (in bytes): | 4 | 2 |
@@ -19,10 +22,17 @@ import Protocols.PacketStream
 -- Description:
 --   P: Preamble, used to find new packets if an error has accured, should always be `0xea88eacd`
 --   T: Packet type
---
---
--- # ILA Data Packet
+data IlaFinalizedPacket = IlaFinalizedPacket
+  { preamble :: BitVector 32,
+    kind :: BitVector 16
+  }
+  deriving (Generic, NFDataX, BitPack, Eq, Show)
+
+-- | ILA Data Packet
 -- Version 1
+--
+-- The heart of the ILA data communications, this packet contains the raw data captured by the ILA
+-- The captured data will be chopped into bytes and sent over any underlaying network layer
 --
 -- Size (in bytes): | 2 | 2 | 2 | 4 | ... |
 -- Type:            | V | I | W | L |  D  |
@@ -37,16 +47,16 @@ import Protocols.PacketStream
 --  Data ID only gives enough information to differentiate between different Clash `Signal`s. To know
 --  from which ILA the data id comes from. Another type of packet will determine which IDs belong to
 --  which ILAs.
-
 data IlaDataPacket = IlaDataPacket
-  { preamble :: BitVector 32,
-    kind :: BitVector 16,
-    version :: BitVector 16,
+  { version :: BitVector 16,
     id :: BitVector 16,
     width :: BitVector 16,
     length :: BitVector 32
   }
   deriving (Generic, NFDataX, BitPack, Eq, Show)
+
+instance IlaPacketType IlaDataPacket where
+  kind _ = 1
 
 -- | Construct a data packet from a stream of raw data
 dataPacket ::
@@ -62,19 +72,41 @@ dataPacket ::
   -- | Circuit which takes in a datastream with the length as metadata and outputs packaged data
   Circuit
     (PacketStream dom dataWidth (Index size))
-    (PacketStream dom dataWidth ())
+    (PacketStream dom dataWidth IlaDataPacket)
 dataPacket _ = packetizerC metaTransfer headerTransfer
   where
-    metaTransfer _ = ()
+    metaTransfer = headerTransfer
     headerTransfer oldMeta =
       IlaDataPacket
-        { preamble = 0xea88eacd,
-          kind = 0x0000,
-          version = 0x0001,
+        { version = 0x0001,
           id = 0x0000,
           width = natToNum @(BitSize t),
           length = (natToNum @(BitSize t `DivRU` 8)) * (resize $ pack oldMeta)
         }
+
+-- | Finalize a ILA packet
+--
+-- Prepends a preamble and the packet type to any form of ILA packet and erases the specific packet
+-- type from the metadata. This packet can now be sent over any transport medium to the host
+-- computer and be understood by the ILA software.
+finalizePacket ::
+  forall dom dataWidth packet .
+  ( HiddenClockResetEnable dom,
+    KnownNat dataWidth,
+    IlaPacketType packet,
+    1 <= dataWidth
+  ) =>
+  Circuit
+    (PacketStream dom dataWidth packet)
+    (PacketStream dom dataWidth IlaFinalizedPacket)
+finalizePacket = packetizerC metaTransfer headerTransfer
+  where
+    metaTransfer = headerTransfer
+    headerTransfer packet =
+      IlaFinalizedPacket {
+        preamble = 0xea88eacd,
+        kind = kind packet
+      }
 
 -- | Converts `PacketStream` into a `Df` of bytes. For packet stream data larger than one byte,
 -- it will send out bytes in most-significant-byte order.
