@@ -17,6 +17,8 @@ struct Cli {
 
 #[derive(Subcommand, Debug)]
 enum Subcommands {
+    /// Generate a VCD dump from incoming signals
+    Vcd(VcdArgs),
     /// Analyse incoming packets and attempt to parse them according to packet formats
     Analysis(AnalysisArgs),
     /// Monitor output of the port, all data is displayed in hex
@@ -63,6 +65,21 @@ struct AnalysisArgs {
     baud: u32,
 }
 
+#[derive(Args, Debug)]
+struct VcdArgs {
+    #[arg(short, long, help = "Path to serial port to use")]
+    port: PathBuf,
+
+    #[arg(short = 'o', long, help = "Path to output the VCD file")]
+    path: PathBuf,
+
+    #[arg(short, long, default_value_t = String::from("TopLevel"), help = "The name of the toplevel to display in the VCD")]
+    toplevel: String,
+
+    #[arg(short, long, default_value_t = 9600, help = "Sets baud rate")]
+    baud: u32,
+}
+
 fn find_specified_port(check: &PathBuf, baud: u32) -> Box<dyn SerialPort> {
     let ports = serialport::available_ports().expect("Unable to iterate serial devices. Exiting.");
 
@@ -86,6 +103,13 @@ impl ParseSubcommand for AnalysisArgs {
     fn parse(self) {
         let port = find_specified_port(&self.port, self.baud);
         packet_analysis(port, self)
+    }
+}
+
+impl ParseSubcommand for VcdArgs {
+    fn parse(self) {
+        let port = find_specified_port(&self.port, self.baud);
+        vcd_dump(port, self)
     }
 }
 
@@ -142,10 +166,30 @@ fn packet_analysis(port: Box<dyn SerialPort>, _: AnalysisArgs) {
     }
 }
 
+fn vcd_dump(port: Box<dyn SerialPort>, args: VcdArgs) {
+    println!(
+        "Waiting on packets to generate VCD on {}",
+        port.name().unwrap_or(String::from("<unknown>"))
+    );
+
+    let rx = packet::packet_loop(port.bytes());
+    let mut rx_iter = rx.iter();
+
+    let packet = loop {
+        if let Some(packet::Packets::Data(packet)) = rx_iter.next() {
+            break packet;
+        }
+    };
+
+    vcd::write_to_vcd(&vec![packet], &args.toplevel, args.path)
+        .expect("Failed to generate VCD file")
+}
+
 fn main() {
     let cli = Cli::parse();
 
     match cli.command {
+        Subcommands::Vcd(args) => args.parse(),
         Subcommands::Analysis(args) => args.parse(),
         Subcommands::Monitor(args) => args.parse(),
         Subcommands::List => {
