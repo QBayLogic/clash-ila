@@ -1,3 +1,8 @@
+use std::{
+    io::{Bytes, Read},
+    sync::mpsc::{self, Receiver},
+};
+
 use bitvec::prelude::*;
 
 /// A utility trait, only implemented for iterators over a `u8`'s
@@ -138,4 +143,74 @@ pub fn get_packet(data: &Vec<u8>) -> Result<(Packets, usize), ParseErr> {
         }
         _ => Err(ParseErr::InvalidType),
     }
+}
+
+/// Create a loop for reading and parsing packets over a certain bytestream
+///
+/// Depending on the underlying iterator, it may block until it has recieved valid data. Therefore
+/// this function will spawn in a seperate thread and send succesfully parsed packed over a channel
+/// to the reciever.
+///
+/// * bytesteam - The bytes iterator to parse incoming packets from
+pub fn packet_loop<T>(bytesteam: Bytes<T>) -> Receiver<Packets>
+where
+    T: Read + Send + 'static,
+{
+    let (tx, rx) = mpsc::channel();
+
+    let packet_sniffer = move || {
+        let mut buffer: Vec<u8> = vec![];
+
+        for byte in bytesteam {
+            let Ok(byte) = byte else {
+                if buffer.is_empty() {
+                    continue;
+                }
+
+                match get_packet(&buffer) {
+                    Ok((packet, leftover)) => {
+                        match tx.send(packet) {
+                            Ok(_) => (),
+                            Err(err) => {
+                                eprintln!("Failure sending valid packet over thread {}", err)
+                            }
+                        }
+                        buffer = buffer[(buffer.len() - leftover)..].to_vec();
+                    }
+                    Err(err) => match err {
+                        ParseErr::NeedsMoreBytes => (),
+                        ParseErr::InvalidType => {
+                            let pos = find_preamble(&buffer);
+                            match pos {
+                                Some(p) => buffer = buffer[p..].to_vec(),
+                                None => buffer.clear(),
+                            }
+                        }
+                        ParseErr::UnsupportedVersion => {
+                            let pos = find_preamble(&buffer);
+                            match pos {
+                                Some(p) => buffer = buffer[p..].to_vec(),
+                                None => buffer.clear(),
+                            }
+                        }
+                        ParseErr::NoPreamble => {
+                            let pos = find_preamble(&buffer);
+                            match pos {
+                                Some(p) => buffer = buffer[p..].to_vec(),
+                                None => buffer.clear(),
+                            }
+                        }
+                        ParseErr::InvalidPreamblePlacement(p) => {
+                            buffer = buffer[p..].to_vec();
+                        }
+                    },
+                }
+                continue;
+            };
+            buffer.push(byte);
+        }
+    };
+    std::thread::spawn(packet_sniffer);
+
+    rx
 }

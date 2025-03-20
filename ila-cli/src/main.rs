@@ -104,6 +104,7 @@ fn monitor_port(port: Box<dyn SerialPort>, args: MonitorArgs) {
         "Monitoring on {}",
         port.name().unwrap_or(String::from("<unknown>"))
     );
+
     for byte in port.bytes() {
         let Ok(byte) = byte else { continue };
 
@@ -129,62 +130,15 @@ fn monitor_port(port: Box<dyn SerialPort>, args: MonitorArgs) {
     }
 }
 
-fn packet_analysis(port: Box<dyn SerialPort>, args: AnalysisArgs) {
-    let mut buffer: Vec<u8> = vec![];
-
+fn packet_analysis(port: Box<dyn SerialPort>, _: AnalysisArgs) {
     println!(
         "Analysing packets on {}",
         port.name().unwrap_or(String::from("<unknown>"))
     );
-    for byte in port.bytes() {
-        let Ok(byte) = byte else {
-            if buffer.is_empty() {
-                continue;
-            }
 
-            match packet::get_packet(&buffer) {
-                Ok((packet, leftover)) => {
-                    match packet {
-                        packet::Packets::Data(data_packet) => {
-                            vcd::write_to_vcd(&vec![data_packet], "toplevel", "demo.vcd")
-                                .expect("oopsie")
-                        }
-                    }
-
-                    //println!("Valid packet: {packet:?}");
-                    buffer = buffer[(buffer.len() - leftover)..].to_vec();
-                }
-                Err(err) => match err {
-                    packet::ParseErr::NeedsMoreBytes => (),
-                    packet::ParseErr::InvalidType => {
-                        let pos = packet::find_preamble(&buffer);
-                        match pos {
-                            Some(p) => buffer = buffer[p..].to_vec(),
-                            None => buffer.clear(),
-                        }
-                    }
-                    packet::ParseErr::UnsupportedVersion => {
-                        let pos = packet::find_preamble(&buffer);
-                        match pos {
-                            Some(p) => buffer = buffer[p..].to_vec(),
-                            None => buffer.clear(),
-                        }
-                    }
-                    packet::ParseErr::NoPreamble => {
-                        let pos = packet::find_preamble(&buffer);
-                        match pos {
-                            Some(p) => buffer = buffer[p..].to_vec(),
-                            None => buffer.clear(),
-                        }
-                    }
-                    packet::ParseErr::InvalidPreamblePlacement(p) => {
-                        buffer = buffer[p..].to_vec();
-                    }
-                },
-            }
-            continue;
-        };
-        buffer.push(byte);
+    let rx = packet::packet_loop(port.bytes());
+    for packet in rx {
+        println!("Valid packet recieved: {packet:?}");
     }
 }
 
