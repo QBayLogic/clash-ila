@@ -54,7 +54,8 @@ topLogicUart baud btns rx = go
     activeSignal <- triggerReader -< btns
     bufferData <- reader -< activeSignal
     packet <- dataPacket (Proxy :: Proxy (BitVector 9)) -< bufferData
-    txByte <- ps2df -< packet
+    finalPacket <- finalizePacket -< packet
+    txByte <- ps2df -< finalPacket
     idC -< txBit
 
   go = snd $ main ((btns, rx), pure ())
