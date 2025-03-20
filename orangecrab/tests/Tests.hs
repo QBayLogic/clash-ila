@@ -16,8 +16,8 @@ main =
         ]
   )
     .&&. ( checkParallel
-             $ Group
-               "Packets"
-               [ ("DataPacketStructure", P.structureProperty)
-               ]
+            $ Group
+              "Packets"
+              [ ("DataPacketStructure", P.structureProperty)
+              ]
          )

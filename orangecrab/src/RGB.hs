@@ -1,24 +1,24 @@
 {-# LANGUAGE RecordWildCards #-}
 
--- |
--- Module      : RGB
--- Copyright   : Copyright © 2024 QBayLogic B.V.
--- License     : MIT
--- Maintainer  : QBayLogic B.V.
--- Stability   : experimental
--- Portability : POSIX
---
--- RGB led color mixing.
+{- |
+Module      : RGB
+Copyright   : Copyright © 2024 QBayLogic B.V.
+License     : MIT
+Maintainer  : QBayLogic B.V.
+Stability   : experimental
+Portability : POSIX
+
+RGB led color mixing.
+-}
 module RGB where
 
 import Clash.Prelude
 
 -- | Color values.
-data Color
-  = Color
-  { r :: Unsigned 8,
-    g :: Unsigned 8,
-    b :: Unsigned 8
+data Color = Color
+  { r :: Unsigned 8
+  , g :: Unsigned 8
+  , b :: Unsigned 8
   }
   deriving (Generic, NFDataX, BitPack, Eq, Show)
 
@@ -34,11 +34,10 @@ cyan = Color 0 255 255
 violet = Color 190 70 242
 
 -- | RBG led interface
-data RGB
-  = RGB
-  { rLed :: "r" ::: Bool,
-    gLed :: "g" ::: Bool,
-    bLed :: "b" ::: Bool
+data RGB = RGB
+  { rLed :: "r" ::: Bool
+  , gLed :: "g" ::: Bool
+  , bLed :: "b" ::: Bool
   }
   deriving (Generic, NFDataX, BitPack)
 
@@ -48,8 +47,8 @@ driveRGB ::
   Signal dom Color ->
   Signal dom RGB
 driveRGB = mealy (~~>) 0
-  where
-    c ~~> Color {..} =
-      ( satSucc SatWrap c,
-        RGB (c >= r) (c >= g) (c >= b)
-      )
+ where
+  c ~~> Color{..} =
+    ( satSucc SatWrap c
+    , RGB (c >= r) (c >= g) (c >= b)
+    )

@@ -125,7 +125,7 @@ structureProperty = property $ do
     Gen.list (Range.linear 0 24) (genUnsigned @9 $ Range.linear 0 500)
 
   let toSimulate = withClockResetEnable systemClockGen systemResetGen enableGen
-  let simOptions = def {resetCycles = 1, ignoreReset = False}
+  let simOptions = def{resetCycles = 1, ignoreReset = False}
   let expected = dataPackedModel input
   let simulated = DL.take (DL.length expected) $ simulateC (toSimulate dataPacket (DD.Proxy :: DD.Proxy (Unsigned 9))) simOptions (testbenchDataPacket @25 input)
 

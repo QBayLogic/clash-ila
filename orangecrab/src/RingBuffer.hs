@@ -5,8 +5,9 @@ import Protocols
 import Protocols.PacketStream
 import Protocols.Wishbone
 
--- | A non-conventional ring buffer, capable of writing data to the tail of the buffer, overwriting old data
--- Can read from any point within the buffer specified by the index
+{- | A non-conventional ring buffer, capable of writing data to the tail of the buffer, overwriting old data
+Can read from any point within the buffer specified by the index
+-}
 ringBuffer ::
   forall dom size a.
   (HiddenClockResetEnable dom, NFDataX a, KnownNat size, 1 <= size) =>
@@ -27,94 +28,96 @@ ringBuffer ::
   (Signal dom a, Signal dom (Index (size + 1)))
 ringBuffer size ini clear writeData readIndex =
   (blockRam1 NoClearOnReset size ini readAddr ramWrite, getLength)
-  where
-    getHeadTail :: Signal dom (Index size, Index size)
-    getHeadTail =
-      register (0, 0)
-        $ mux
-          clear
-          (pure (0, 0))
-        $ liftA3 newHeadTail getHeadTail writeData getLength
+ where
+  getHeadTail :: Signal dom (Index size, Index size)
+  getHeadTail =
+    register (0, 0)
+      $ mux
+        clear
+        (pure (0, 0))
+      $ liftA3 newHeadTail getHeadTail writeData getLength
 
-    getLength :: Signal dom (Index (size + 1))
-    getLength =
-      register 0
-        $ mux
-          clear
-          (pure 0)
-        $ newLength
-        <$> bundle (getLength, writeData)
+  getLength :: Signal dom (Index (size + 1))
+  getLength =
+    register 0
+      $ mux
+        clear
+        (pure 0)
+      $ newLength
+      <$> bundle (getLength, writeData)
 
-    newLength (old, Nothing) = old
-    newLength (old, Just _) = satAdd SatBound old 1
+  newLength (old, Nothing) = old
+  newLength (old, Just _) = satAdd SatBound old 1
 
-    newHeadTail old Nothing _ = old
-    newHeadTail (_, oldTail) (Just _) len = (newHead, newTail)
-      where
-        newTail = satAdd SatWrap oldTail 1
+  newHeadTail old Nothing _ = old
+  newHeadTail (_, oldTail) (Just _) len = (newHead, newTail)
+   where
+    newTail = satAdd SatWrap oldTail 1
 
-        newHead
-          -- If we're overflowing, move the head to match the tail
-          -- Otherwise, be zero
-          | len == maxBound = newTail
-          | otherwise = 0
+    newHead
+      -- If we're overflowing, move the head to match the tail
+      -- Otherwise, be zero
+      | len == maxBound = newTail
+      | otherwise = 0
 
-    readAddr :: Signal dom (Index size)
-    readAddr = liftA2 (satAdd SatWrap) (fst $ unbundle getHeadTail) readIndex
+  readAddr :: Signal dom (Index size)
+  readAddr = liftA2 (satAdd SatWrap) (fst $ unbundle getHeadTail) readIndex
 
-    ramWrite :: Signal dom (Maybe (Index size, a))
-    ramWrite = liftA2 (\addr write -> (fmap (addr,) write)) (snd $ unbundle getHeadTail) writeData
+  ramWrite :: Signal dom (Maybe (Index size, a))
+  ramWrite = liftA2 (\addr write -> (fmap (addr,) write)) (snd $ unbundle getHeadTail) writeData
 
--- | Exposes a wishbone interface to read out data from the ringBuffer
--- Address must be an index within the buffer, trying to read and address bigger than the buffer
--- capacity will result in `err` being asserted
+{- | Exposes a wishbone interface to read out data from the ringBuffer
+Address must be an index within the buffer, trying to read and address bigger than the buffer
+capacity will result in `err` being asserted
+-}
 ringBufferReaderWb ::
   forall dom size dat.
-  ( HiddenClockResetEnable dom,
-    NFDataX dat,
-    1 <= size,
-    KnownNat size
+  ( HiddenClockResetEnable dom
+  , NFDataX dat
+  , 1 <= size
+  , KnownNat size
   ) =>
   -- | The buffer component
   (Signal dom (Index size) -> (Signal dom dat, Signal dom (Index (size + 1)))) ->
   -- | The buffer reader circuit
   Circuit (Wishbone dom Standard (CLog 2 size) dat) ()
 ringBufferReaderWb buffer = Circuit handler
-  where
-    handler (fwdIn, _) = (output, ())
-      where
-        (bufferValue, bufferLength) = buffer (bitCoerce . addr <$> fwdIn)
-        -- \| Checks if the value in the current cycle is valid
-        -- This compensates for the delay too
-        isValueValid = register False $ inTransaction <$> fwdIn .&&. not <$> invalidAddress
+ where
+  handler (fwdIn, _) = (output, ())
+   where
+    (bufferValue, bufferLength) = buffer (bitCoerce . addr <$> fwdIn)
+    -- \| Checks if the value in the current cycle is valid
+    -- This compensates for the delay too
+    isValueValid = register False $ inTransaction <$> fwdIn .&&. not <$> invalidAddress
 
-        invalidAddress = (unpack . resize . addr <$> fwdIn) .>=. bufferLength
-        inTransaction m2s = not (writeEnable m2s) && strobe m2s && busCycle m2s
+    invalidAddress = (unpack . resize . addr <$> fwdIn) .>=. bufferLength
+    inTransaction m2s = not (writeEnable m2s) && strobe m2s && busCycle m2s
 
-        output =
-          liftA3
-            ( \value valid err ->
-                WishboneS2M
-                  { retry = False,
-                    stall = False,
-                    err = err,
-                    acknowledge = valid,
-                    readData = value
-                  }
-            )
-            bufferValue
-            isValueValid
-            invalidAddress
+    output =
+      liftA3
+        ( \value valid err ->
+            WishboneS2M
+              { retry = False
+              , stall = False
+              , err = err
+              , acknowledge = valid
+              , readData = value
+              }
+        )
+        bufferValue
+        isValueValid
+        invalidAddress
 
--- | Reads out the entire buffer using the PacketStream protocol
--- The data will be chopped up in bytes and sent one-by-one each clock cycle
+{- | Reads out the entire buffer using the PacketStream protocol
+The data will be chopped up in bytes and sent one-by-one each clock cycle
+-}
 ringBufferReaderPS ::
   forall dom size dat.
-  ( HiddenClockResetEnable dom,
-    NFDataX dat,
-    BitPack dat,
-    1 <= size,
-    KnownNat size
+  ( HiddenClockResetEnable dom
+  , NFDataX dat
+  , BitPack dat
+  , 1 <= size
+  , KnownNat size
   ) =>
   -- | The buffer component
   (Signal dom (Index size) -> (Signal dom dat, Signal dom (Index (size + 1)))) ->
@@ -124,60 +127,60 @@ ringBufferReaderPS ::
     (CSignal dom Bool)
     (PacketStream dom (BitSize dat `DivRU` 8) (Index (size + 1)))
 ringBufferReaderPS buffer = Circuit exposeIn
-  where
-    exposeIn (active, s2m) = out
-      where
-        doIncrement = active .&&. _ready <$> s2m
+ where
+  exposeIn (active, s2m) = out
+   where
+    doIncrement = active .&&. _ready <$> s2m
 
-        (bufferValue, bufferLength) = buffer index
+    (bufferValue, bufferLength) = buffer index
 
-        -- \| Sync the activity with the delay from the RAM read
-        delayedActive = register False active
-        -- \| The output value is always invalid (thus should be Nothing) if we already wrote all bytes
-        -- or the buffer has no content
-        valueValid = delayedActive .&&. (bufferLength ./=. pure 0) .&&. readCount ./=. bufferLength
+    -- \| Sync the activity with the delay from the RAM read
+    delayedActive = register False active
+    -- \| The output value is always invalid (thus should be Nothing) if we already wrote all bytes
+    -- or the buffer has no content
+    valueValid = delayedActive .&&. (bufferLength ./=. pure 0) .&&. readCount ./=. bufferLength
 
-        -- Deliberately delay the read count by one clock cycle to sync with the actual read from RAM
-        readCount =
-          register 0
-            $ mux
-              active
-              (mux doIncrement (satAdd SatBound 1 <$> readCount) readCount)
-              0
+    -- Deliberately delay the read count by one clock cycle to sync with the actual read from RAM
+    readCount =
+      register 0
+        $ mux
+          active
+          (mux doIncrement (satAdd SatBound 1 <$> readCount) readCount)
+          0
 
-        -- Incrementing this way gets us the new index *immediately* rather than having to wait a cycle
-        -- for the register to update
-        oldIndex :: Signal dom (Index size)
-        oldIndex = register 0 index
-        index :: Signal dom (Index size)
-        index =
-          mux
-            active
-            (mux doIncrement (satAdd SatBound 1 <$> oldIndex) oldIndex)
-            0
+    -- Incrementing this way gets us the new index *immediately* rather than having to wait a cycle
+    -- for the register to update
+    oldIndex :: Signal dom (Index size)
+    oldIndex = register 0 index
+    index :: Signal dom (Index size)
+    index =
+      mux
+        active
+        (mux doIncrement (satAdd SatBound 1 <$> oldIndex) oldIndex)
+        0
 
-        -- \| Takes in any type (as long as it can be `BitPack`'d and chops it up into a vector of bytes
-        splitIntoBytes :: (BitPack a) => a -> Vec (BitSize a `DivRU` 8) (BitVector 8)
-        splitIntoBytes bv = unpack . resize $ pack bv
+    -- \| Takes in any type (as long as it can be `BitPack`'d and chops it up into a vector of bytes
+    splitIntoBytes :: (BitPack a) => a -> Vec (BitSize a `DivRU` 8) (BitVector 8)
+    splitIntoBytes bv = unpack . resize $ pack bv
 
-        -- \| Formats the output data into the PacketStream format
-        -- Once we reached the last byte, _last should be valid for all bytes considering we send data
-        -- one-by-one anyways
-        formatData value len count =
-          PacketStreamM2S
-            { _data = splitIntoBytes value,
-              _last = if satSub SatZero len 1 == count then Just maxBound else Nothing,
-              _meta = len,
-              _abort = False
-            }
+    -- \| Formats the output data into the PacketStream format
+    -- Once we reached the last byte, _last should be valid for all bytes considering we send data
+    -- one-by-one anyways
+    formatData value len count =
+      PacketStreamM2S
+        { _data = splitIntoBytes value
+        , _last = if satSub SatZero len 1 == count then Just maxBound else Nothing
+        , _meta = len
+        , _abort = False
+        }
 
-        packetStream =
-          mux
-            valueValid
-            (Just <$> liftA3 formatData bufferValue bufferLength readCount)
-            (pure Nothing)
+    packetStream =
+      mux
+        valueValid
+        (Just <$> liftA3 formatData bufferValue bufferLength readCount)
+        (pure Nothing)
 
-        out = (pure (), packetStream)
+    out = (pure (), packetStream)
 
 -- | A testbench for the ring buffer, capable of reading out the entire content of the ringBuffer
 testbenchRingBuffer ::
@@ -192,32 +195,32 @@ testbenchRingBuffer ::
   -- The first set of data will arive 1 cycles after being triggered
   Signal dom (Maybe a)
 testbenchRingBuffer active buffer = readValue
-  where
-    (bufferValue, bufferLength) = buffer index
+ where
+  (bufferValue, bufferLength) = buffer index
 
-    -- \| Sync the activity with the delay from the RAM read
-    delayedActive = register False active
-    -- \| The output value is always invalid (thus should be Nothing) if we already wrote all bytes
-    -- or the buffer has no content
-    valueValid = delayedActive .&&. (bufferLength ./=. pure 0) .&&. writeCount ./=. bufferLength
+  -- \| Sync the activity with the delay from the RAM read
+  delayedActive = register False active
+  -- \| The output value is always invalid (thus should be Nothing) if we already wrote all bytes
+  -- or the buffer has no content
+  valueValid = delayedActive .&&. (bufferLength ./=. pure 0) .&&. writeCount ./=. bufferLength
 
-    -- \| Keep track of how many items we read out
-    writeCount :: Signal dom (Index (size + 1))
-    writeCount = register 0 $ liftA2 newWriteCount valueValid writeCount
+  -- \| Keep track of how many items we read out
+  writeCount :: Signal dom (Index (size + 1))
+  writeCount = register 0 $ liftA2 newWriteCount valueValid writeCount
 
-    newWriteCount :: Bool -> Index (size + 1) -> Index (size + 1)
-    newWriteCount True count = count + 1
-    newWriteCount False count = count
+  newWriteCount :: Bool -> Index (size + 1) -> Index (size + 1)
+  newWriteCount True count = count + 1
+  newWriteCount False count = count
 
-    index = register 0 $ liftA3 newIndex active index bufferLength
+  index = register 0 $ liftA3 newIndex active index bufferLength
 
-    newIndex True i len
-      | i == (resize $ satSub SatZero len 1) = i
-      | otherwise = i + 1
-    newIndex False i _ = i
+  newIndex True i len
+    | i == (resize $ satSub SatZero len 1) = i
+    | otherwise = i + 1
+  newIndex False i _ = i
 
-    readValue =
-      mux
-        valueValid
-        (Just <$> bufferValue)
-        (pure Nothing)
+  readValue =
+    mux
+      valueValid
+      (Just <$> bufferValue)
+      (pure Nothing)
