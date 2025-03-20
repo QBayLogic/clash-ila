@@ -27,6 +27,7 @@ enum Subcommands {
     List,
 }
 
+/// Simple trait to indicate this is a valid subcommand with arguments
 trait ParseSubcommand {
     fn parse(self);
 }
@@ -80,25 +81,6 @@ struct VcdArgs {
     baud: u32,
 }
 
-fn find_specified_port(check: &PathBuf, baud: u32) -> Box<dyn SerialPort> {
-    let ports = serialport::available_ports().expect("Unable to iterate serial devices. Exiting.");
-
-    let canon = check
-        .as_path()
-        .canonicalize()
-        .expect("Invalid path provided");
-    let check_path = canon.as_os_str().to_string_lossy();
-
-    let valid_port = ports
-        .into_iter()
-        .find(|port| port.port_name == check_path)
-        .expect("Provided path is not a valid serial port.");
-
-    serialport::new(valid_port.port_name, baud)
-        .open()
-        .expect("Unable to open serial port (maybe busy?)")
-}
-
 impl ParseSubcommand for AnalysisArgs {
     fn parse(self) {
         let port = find_specified_port(&self.port, self.baud);
@@ -120,6 +102,34 @@ impl ParseSubcommand for MonitorArgs {
     }
 }
 
+/// Check if an user given port path is valid and readable, intended to be used within a CLI-like
+/// context
+///
+/// Returns a readable serial port on success
+///
+/// # Panics
+///
+/// Panics if the user provided an incorrect path or other IO errors accure
+fn find_specified_port(check: &PathBuf, baud: u32) -> Box<dyn SerialPort> {
+    let ports = serialport::available_ports().expect("Unable to iterate serial devices. Exiting.");
+
+    let canon = check
+        .as_path()
+        .canonicalize()
+        .expect("Invalid path provided");
+    let check_path = canon.as_os_str().to_string_lossy();
+
+    let valid_port = ports
+        .into_iter()
+        .find(|port| port.port_name == check_path)
+        .expect("Provided path is not a valid serial port.");
+
+    serialport::new(valid_port.port_name, baud)
+        .open()
+        .expect("Unable to open serial port (maybe busy?)")
+}
+
+/// `monitor` CLI handler
 fn monitor_port(port: Box<dyn SerialPort>, args: MonitorArgs) {
     let mut addr = 0;
     let mut wrote = 0;
@@ -154,6 +164,7 @@ fn monitor_port(port: Box<dyn SerialPort>, args: MonitorArgs) {
     }
 }
 
+/// `analysis` CLI handler
 fn packet_analysis(port: Box<dyn SerialPort>, _: AnalysisArgs) {
     println!(
         "Analysing packets on {}",
@@ -166,6 +177,7 @@ fn packet_analysis(port: Box<dyn SerialPort>, _: AnalysisArgs) {
     }
 }
 
+/// `vcd` CLI handler
 fn vcd_dump(port: Box<dyn SerialPort>, args: VcdArgs) {
     println!(
         "Waiting on packets to generate VCD on {}",
