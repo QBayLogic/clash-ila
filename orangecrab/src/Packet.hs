@@ -5,11 +5,9 @@
 module Packet where
 
 import Clash.Prelude
-import Data.Maybe qualified as DM
 import Data.Proxy
 import Data.Maybe qualified as DM
 import Protocols
-import Protocols.Df qualified as Df
 import Protocols.PacketStream
 
 class IlaPacketType a where
@@ -158,43 +156,3 @@ finalizePacket = packetizerC metaTransfer headerTransfer
       { preamble = 0xea88eacd
       , kind = kind packet
       }
-
-{- | Converts `PacketStream` into a `Df` of bytes. For packet stream data larger than one byte,
-it will send out bytes in most-significant-byte order.
-
-NOTE: Please do properly follow the PacketStream standard and keep sending the same data until
-`_ready` is raised. Not doing so will cause issues.
--}
-ps2df ::
-  forall dom dataWidth a.
-  ( HiddenClockResetEnable dom
-  , KnownNat dataWidth
-  , 1 <= dataWidth
-  ) =>
-  -- | The input `PacketStream` and the output `Df`, will only set `_ready` to true once every
-  -- byte in PacketStream has been sent over in Df
-  Circuit (PacketStream dom dataWidth a) (Df dom (BitVector 8))
-ps2df = Circuit exposeIn
- where
-  exposeIn (incoming, backpressure) = out
-   where
-    oldIndex :: Signal dom (Index dataWidth)
-    oldIndex = register 0 index
-    index :: Signal dom (Index dataWidth)
-    index =
-      mux
-        (DM.isNothing <$> incoming)
-        (pure 0)
-        $ mux
-          (pure (Ack False) .==. backpressure)
-          oldIndex
-          (satAdd SatWrap 1 <$> oldIndex)
-
-    convert _ Nothing = Df.NoData
-    convert i (Just m2s) = Df.Data $ _data m2s !! i
-
-    out =
-      ( PacketStreamS2M
-          <$> (liftA2 (\i b -> i == maxBound && b == Ack True) oldIndex backpressure)
-      , liftA2 convert index incoming
-      )
