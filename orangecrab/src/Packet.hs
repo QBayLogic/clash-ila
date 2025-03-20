@@ -1,5 +1,5 @@
-{-# LANGUAGE OverloadedRecordDot #-}
 {-# LANGUAGE DuplicateRecordFields #-}
+{-# LANGUAGE OverloadedRecordDot #-}
 {-# LANGUAGE NoFieldSelectors #-}
 
 module Packet where
@@ -7,6 +7,7 @@ module Packet where
 import Clash.Prelude
 import Data.Maybe qualified as DM
 import Data.Proxy
+import Data.Maybe qualified as DM
 import Protocols
 import Protocols.Df qualified as Df
 import Protocols.PacketStream
@@ -27,6 +28,52 @@ data IlaFinalizedPacket = IlaFinalizedPacket
     kind :: BitVector 16
   }
   deriving (Generic, NFDataX, BitPack, Eq, Show)
+
+-- | ILA Display Packet
+-- Version 1
+--
+-- An empty packet, merely indicating to the system it should display whatever signals the computer
+-- has received
+--
+-- Size (in bytes): none
+-- Type:            none
+-- Packet type: 0x0002
+-- Description:
+--    none
+data IlaDisplayPacket = IlaDisplayPacket
+  {}
+  deriving (Generic, NFDataX, BitPack, Eq, Show)
+
+instance IlaPacketType IlaDisplayPacket where
+  kind _ = 2
+
+-- | A circuit for creating an `IlaDisplayPacket`
+ilaDisplayPacket ::
+  forall dom.
+  (HiddenClockResetEnable dom) =>
+  -- | The input is a trigger which generates an IlaDisplayPacket on the output until it receives
+  -- backpressure. The trigger only needs to be set for one clock cycle.
+  Circuit
+    (CSignal dom Bool)
+    (PacketStream dom 0 IlaDisplayPacket)
+ilaDisplayPacket = Circuit exposeIn
+ where
+  exposeIn (trigger, backpressure) = out
+   where
+    packet True =
+      Just
+        $ PacketStreamM2S
+          { _meta = IlaDisplayPacket
+          , _last = Just 0
+          , _abort = False
+          , _data = Nil
+          }
+    packet False = Nothing
+
+    oldTriggered = register False triggered
+    triggered = (trigger .||. oldTriggered) .&&. (not . _ready <$> backpressure)
+
+    out = (pure (), packet <$> triggered)
 
 -- | ILA Data Packet
 -- Version 1
@@ -90,7 +137,7 @@ dataPacket _ = packetizerC metaTransfer headerTransfer
 -- type from the metadata. This packet can now be sent over any transport medium to the host
 -- computer and be understood by the ILA software.
 finalizePacket ::
-  forall dom dataWidth packet .
+  forall dom dataWidth packet.
   ( HiddenClockResetEnable dom,
     KnownNat dataWidth,
     IlaPacketType packet,
@@ -103,10 +150,10 @@ finalizePacket = packetizerC metaTransfer headerTransfer
   where
     metaTransfer = headerTransfer
     headerTransfer packet =
-      IlaFinalizedPacket {
-        preamble = 0xea88eacd,
-        kind = kind packet
-      }
+      IlaFinalizedPacket
+        { preamble = 0xea88eacd,
+          kind = kind packet
+        }
 
 -- | Converts `PacketStream` into a `Df` of bytes. For packet stream data larger than one byte,
 -- it will send out bytes in most-significant-byte order.
