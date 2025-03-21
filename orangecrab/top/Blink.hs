@@ -6,29 +6,23 @@ module Blink where
 import Clash.Annotations.TH
 import Clash.Cores.UART (ValidBaud)
 import Clash.Prelude
+
+import Data.Maybe qualified as DM
+
 import Communication
-import Data.Proxy
 import Domain
-import Packet
 import Pmod
 import Probes
 import Protocols
-import RingBuffer
 
 triggerReader ::
   (HiddenClockResetEnable dom) =>
-  Circuit (CSignal dom (BitVector 4)) (CSignal dom Bool)
+  Circuit (CSignal dom (Maybe (BitVector 8))) (CSignal dom Bool)
 triggerReader = Circuit exposeIn
  where
   exposeIn (incoming, _) = out
    where
-    value = register False $ liftA2 newValue value incoming
-
-    newValue _ 1 = True
-    newValue _ 2 = False
-    newValue old _ = old
-
-    out = (pure (), value)
+    out = (pure (), DM.isJust <$> incoming)
 
 topLogicUart ::
   forall dom baud.
@@ -46,19 +40,14 @@ topLogicUart baud btns rx = go
   counter :: (HiddenClockResetEnable dom) => Signal dom (BitVector 9)
   counter = register 0 $ satAdd SatWrap 1 <$> counter
 
-  ila = ilaCore d6 (pure True) (== 20) (pure False) counter
-  reader = ringBufferReaderPS ila
-
-  Circuit main = circuit $ \(btns, rxBit) -> do
-    (_activation, txBit) <- uartDf baud -< (txByte, rxBit)
-    activeSignal <- triggerReader -< btns
-    bufferData <- reader -< activeSignal
-    packet <- dataPacket (Proxy :: Proxy (BitVector 9)) -< bufferData
-    finalPacket <- finalizePacket -< packet
-    txByte <- ps2df -< finalPacket
+  Circuit main = circuit $ \(rxBit) -> do
+    (activation, txBit) <- uartDf baud -< (txByte, rxBit)
+    triggerReset <- triggerReader -< activation
+    packet <- ilaProbe (SNat @1500) (==300) counter -< triggerReset
+    txByte <- ps2df -< packet
     idC -< txBit
 
-  go = snd $ main ((btns, rx), pure ())
+  go = snd $ main (rx, pure ())
 
 topEntity ::
   "CLK" ::: Clock Dom48 ->
