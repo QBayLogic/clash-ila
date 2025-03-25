@@ -73,28 +73,45 @@ ps2df ::
   ) =>
   -- | The input `PacketStream` and the output `Df`, will only set `_ready` to true once every
   -- byte in PacketStream has been sent over in Df
-  Circuit (PacketStream dom dataWidth a) (Df dom (BitVector 8))
+  Circuit
+    (PacketStream dom dataWidth a)
+    (Df dom (BitVector 8))
 ps2df = Circuit exposeIn
  where
   exposeIn (incoming, backpressure) = out
    where
-    oldIndex :: Signal dom (Index dataWidth)
-    oldIndex = register 0 index
-    index :: Signal dom (Index dataWidth)
-    index =
-      mux
-        (DM.isNothing <$> incoming)
-        (pure 0)
-        $ mux
-          (pure (Ack False) .==. backpressure)
-          oldIndex
-          (satAdd SatWrap 1 <$> oldIndex)
+    -- TODO: ADD PROPER TESTS!!!!
+    -- This function, if broken, would be the cause of A LOTTA HEADACHES
+    -- I experienced that first hand
 
-    convert _ Nothing = Df.NoData
-    convert i (Just m2s) = Df.Data $ _data m2s !! i
+    shouldIncrement = backpressure .==. (pure $ Ack True)
+
+    maxIndex :: Signal dom (Index dataWidth)
+    maxIndex = maxIndex' <$> incoming
+
+    maxIndex' (Just packet) = resize $ (DM.fromMaybe maxBound (_last packet)) - 1
+    maxIndex' Nothing = 0
+
+    index :: Signal dom (Index dataWidth)
+    index = register 0 $ mux isLast 0 $ liftA3 increment index maxIndex shouldIncrement
+
+    increment :: Index dataWidth -> Index dataWidth -> Bool -> Index dataWidth
+    increment current maxIdx True
+      | current >= maxIdx = maxIdx
+      | otherwise = current + 1
+    increment current maxIdx False
+      | current >= maxIdx = maxIdx
+      | otherwise = current
+
+    isLast = index .==. maxIndex .&&. shouldIncrement
+
+    retrieve ::
+      Index dataWidth -> Maybe (PacketStreamM2S dataWidth a) -> Df.Data (BitVector 8)
+    retrieve _ Nothing = Df.NoData
+    retrieve i (Just m2s) = Df.Data $ _data m2s !! i
 
     out =
-      ( PacketStreamS2M
-          <$> (liftA2 (\i b -> i == maxBound && b == Ack True) oldIndex backpressure)
-      , liftA2 convert index incoming
+      ( PacketStreamS2M <$> isLast
+      , liftA2 retrieve index incoming
       )
+
