@@ -148,24 +148,44 @@ ila size tracked = Circuit exposeIn
 
     -- \| Signal to indicate when all buffers should be frozen
     -- For now, if any predicate on any signal triggers, it should freeze all buffers
+    oldFreezeAll = register False freezeAll
     freezeAll :: Signal dom Bool
-    freezeAll = any (== True) <$> triggeredSignals
-
-    -- \| Signal to indicate when all buffers should be cleared
-    -- clearAll :: Signal dom Bool
-    -- clearAll = pure False
+    freezeAll =
+      mux
+        clearAll
+        (pure False)
+        $ oldFreezeAll
+          .||. (any (== True) <$> triggeredSignals)
 
     -- \| The buffers for each signal
     buffers ::
       Vec n (Signal dom (Index size) -> (Signal dom a, Signal dom (Index (size + 1))))
-    buffers = (\signal -> ilaCore size (pure True) signal freezeAll clearAll) <$> (snd <$> tracked)
+    buffers =
+      (\signal -> ilaCore size (pure True) signal (not <$> freezeAll) clearAll)
+        <$> (snd <$> tracked)
 
     -- \| The PacketStream buffer readers
     bufferReaders = ringBufferReaderPS <$> buffers
 
+    shouldIncrement (Just packet) = DM.isJust $ _last packet
+    shouldIncrement Nothing = False
+
     -- \| Logic for selecting the currently active buffer
     bufferSelect :: Signal dom (Index n)
-    bufferSelect = register 0 bufferSelect
+    bufferSelect =
+      register 0 $
+        liftA3
+          bufferIncrement
+          clearAll
+          (shouldIncrement <$> (snd $ packetConstruction ((), sysBackpressure)))
+          bufferSelect
+
+    bufferIncrement :: Bool -> Bool -> Index n -> Index n
+    bufferIncrement True _ _ = 0
+    bufferIncrement _ True c
+      | c == maxBound = maxBound
+      | otherwise = c + 1
+    bufferIncrement _ False c = c
 
     -- \| A vec of signals indicating which buffer is active
     bufferActive :: Vec n (Signal dom Bool)
@@ -191,8 +211,12 @@ ila size tracked = Circuit exposeIn
     outputCircuit ::
       Circuit
         ()
-        (PacketStream dom (BitSize a `DivRU` 8) (Index (size + 1)))
-    outputCircuit = Circuit (\(_, bwdIn) -> ((), bufferOutput bwdIn))
+        -- (PacketStream dom (BitSize a `DivRU` 8) (Index (size + 1)))
+        (PacketStream dom (BitSize a `DivRU` 8) (BitVector 16, Index (size + 1)))
+    outputCircuit = mapMetaS withIndex <| Circuit (\(_, bwdIn) -> ((), bufferOutput bwdIn))
+
+    -- \| Function map the meta data of the packet to contain the index of the signal
+    withIndex = (\idx -> (\metaIn -> (resize $ pack idx, metaIn))) <$> bufferSelect
 
     -- \| Construct a packet from the buffer output
     Circuit packetConstruction = finalizePacket <| dataPacket (Proxy :: Proxy a) <| outputCircuit
