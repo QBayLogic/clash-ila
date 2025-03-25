@@ -80,8 +80,10 @@ triggerController predicate i core = Circuit exposeIn
     shouldSample :: Signal dom Bool
     shouldSample = not <$> triggered
 
+    injectId oldMeta = (0, oldMeta)
+
     buffer = core i shouldSample triggerRst
-    Circuit packet = dataPacket (Proxy :: Proxy a) <| ringBufferReaderPS buffer
+    Circuit packet = dataPacket (Proxy :: Proxy a) <| mapMeta injectId <| ringBufferReaderPS buffer
 
     out = (pure (), snd $ packet (triggered, backpressure))
 

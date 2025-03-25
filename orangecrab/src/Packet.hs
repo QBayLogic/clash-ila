@@ -119,7 +119,7 @@ dataPacket ::
   Proxy t ->
   -- | Circuit which takes in a datastream with the length as metadata and outputs packaged data
   Circuit
-    (PacketStream dom dataWidth (Index size))
+    (PacketStream dom dataWidth (BitVector 16, Index size))
     (PacketStream dom dataWidth IlaDataPacket)
 dataPacket _ = packetizerC metaTransfer headerTransfer
  where
@@ -127,9 +127,9 @@ dataPacket _ = packetizerC metaTransfer headerTransfer
   headerTransfer oldMeta =
     IlaDataPacket
       { version = 0x0001
-      , id = 0x0000
+      , id = fst oldMeta
       , width = natToNum @(BitSize t)
-      , length = (natToNum @(BitSize t `DivRU` 8)) * (resize $ pack oldMeta)
+      , length = (natToNum @(BitSize t `DivRU` 8)) * (resize $ pack $ snd oldMeta)
       }
 
 {- | Finalize a ILA packet

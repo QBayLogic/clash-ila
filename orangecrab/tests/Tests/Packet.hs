@@ -111,7 +111,7 @@ testbenchDataPacket ::
   , 1 <= maxLength
   ) =>
   [[a]] ->
-  [Maybe (PacketStreamM2S (BitSize a `DivRU` 8) (Index maxLength))]
+  [Maybe (PacketStreamM2S (BitSize a `DivRU` 8) (BitVector 16, Index maxLength))]
 testbenchDataPacket i = go
  where
   widthInBytes :: Int
@@ -120,22 +120,22 @@ testbenchDataPacket i = go
   toPacket ::
     Index maxLength ->
     (Index maxLength, a) ->
-    PacketStreamM2S (BitSize a `DivRU` 8) (Index maxLength)
+    PacketStreamM2S (BitSize a `DivRU` 8) (BitVector 16, Index maxLength)
   toPacket len (idx, num) =
     PacketStreamM2S
       { _abort = False
-      , _meta = len
+      , _meta = (0, len)
       , _last = if idx == len - 1 then Just (unpack . resize . pack $ widthInBytes) else Nothing
       , _data = splitIntoBytes num
       }
 
-  convList :: [a] -> [PacketStreamM2S (BitSize a `DivRU` 8) (Index maxLength)]
+  convList :: [a] -> [PacketStreamM2S (BitSize a `DivRU` 8) (BitVector 16, Index maxLength)]
   convList l = toPacket (unpack . resize . pack $ DL.length l) <$> DL.zip [0 ..] l
 
-  package :: [a] -> [Maybe (PacketStreamM2S (BitSize a `DivRU` 8) (Index maxLength))]
+  package :: [a] -> [Maybe (PacketStreamM2S (BitSize a `DivRU` 8) (BitVector 16, Index maxLength))]
   package l = (Just <$> convList l)
 
-  go :: [Maybe (PacketStreamM2S (BitSize a `DivRU` 8) (Index maxLength))]
+  go :: [Maybe (PacketStreamM2S (BitSize a `DivRU` 8) (BitVector 16, Index maxLength))]
   go = DL.concatMap package i
 
 structureProperty :: Property
