@@ -1,5 +1,9 @@
 module Tests.Communication where
 
+-- NOTE: THESE TESTS ARE STILL WORK IN PROGRESS
+-- They do __NOT__ work yet!
+-- This file is very incomplete
+
 import Clash.Hedgehog.Sized.Unsigned (genUnsigned)
 import Clash.Prelude
 import Clash.Sized.Vector (unsafeFromList)

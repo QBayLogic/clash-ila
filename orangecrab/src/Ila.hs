@@ -1,7 +1,7 @@
 {-# OPTIONS_GHC -fconstraint-solver-iterations=10 #-}
 {-# OPTIONS_GHC -fplugin=Protocols.Plugin #-}
 
-module Probes where
+module Ila where
 
 import Clash.Prelude
 import Packet
@@ -106,4 +106,3 @@ ila ::
     (CSignal dom Bool)
     (PacketStream dom (BitSize a `DivRU` 8) IlaFinalizedPacket)
 ila size predicate sig = finalizePacket <| (triggerController predicate sig $ ilaCore size (pure True))
-

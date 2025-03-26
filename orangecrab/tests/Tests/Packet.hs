@@ -17,14 +17,19 @@ import Packet
 import Protocols
 import Protocols.PacketStream
 
-splitIntoBytes :: (BitPack a) => a -> Vec (BitSize a `DivRU` 8) (BitVector 8)
-splitIntoBytes bv = unpack . resize $ pack bv
+-- | Takes in a bitpackable 'thing' and convert it to its byte representation
+convertBytes :: (BitPack a) => a -> Vec (BitSize a `DivRU` 8) (BitVector 8)
+convertBytes bv = unpack . resize $ pack bv
 
-splitIntoBv16 :: (BitPack a) => a -> Vec 2 (BitVector 8)
-splitIntoBv16 bv = unpack . resize $ pack bv
+-- | Takes in a bitpackable 'thing' and convert it to its word representation
+-- Word in this case refers to two bytes (blame x64 for this)
+convertWord :: (BitPack a) => a -> Vec 2 (BitVector 8)
+convertWord bv = unpack . resize $ pack bv
 
-splitIntoBv32 :: (BitPack a) => a -> Vec 4 (BitVector 8)
-splitIntoBv32 bv = unpack . resize $ pack bv
+-- | Takes in a bitpackable 'thing' and convert it to its double representation
+-- Double in this case refers to four bytes (blame x64 for this)
+convertDouble :: (BitPack a) => a -> Vec 4 (BitVector 8)
+convertDouble bv = unpack . resize $ pack bv
 
 -- | Ideal scenario for PacketStreams
 dataPackedModel ::
@@ -48,14 +53,14 @@ dataPackedModel i = out
       [0x00, 0x00]
       DL.++
       -- Width
-      (toList $ splitIntoBv16 width)
+      (toList $ convertWord width)
       DL.++
       -- Length
-      (toList $ splitIntoBv32 len)
+      (toList $ convertDouble len)
 
   byteSequence w =
     header (resize . pack $ (DL.length w) * widthInBytes)
-      DL.++ (DL.concat $ toList . splitIntoBytes <$> w)
+      DL.++ (DL.concat $ toList . convertBytes <$> w)
 
   padBytes ::
     IlaDataPacket ->

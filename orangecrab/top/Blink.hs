@@ -12,22 +12,24 @@ import Data.Maybe qualified as DM
 import Communication
 import Domain
 import Pmod
-import Probes
+import Ila
 import Protocols
 
-triggerReader ::
+-- | Resets the ILA trigger whenever we receive an incoming byte from UART
+triggerResetUart ::
   (HiddenClockResetEnable dom) =>
   Circuit (CSignal dom (Maybe (BitVector 8))) (CSignal dom Bool)
-triggerReader = Circuit exposeIn
+triggerResetUart = Circuit exposeIn
  where
   exposeIn (incoming, _) = out
    where
     out = (pure (), DM.isJust <$> incoming)
 
-triggerReaderBtn ::
+-- | Set the ILA trigger reset state based on the button 0 (TRUE) and button 1 (FALSE)
+triggerResetButtons ::
   (HiddenClockResetEnable dom) =>
   Circuit (CSignal dom (BitVector 4)) (CSignal dom Bool)
-triggerReaderBtn = Circuit exposeIn
+triggerResetButtons = Circuit exposeIn
  where
   exposeIn (incoming, _) = out
    where
@@ -52,12 +54,13 @@ topLogicUart ::
   Signal dom Bit
 topLogicUart baud btns rx = go
  where
+  -- Simple demo signal to 'debug'
   counter :: (HiddenClockResetEnable dom) => Signal dom (BitVector 9)
   counter = register 0 $ satAdd SatWrap 1 <$> counter
 
   Circuit main = circuit $ \(btns, rxBit) -> do
-    (_activation, txBit) <- uartDf baud -< (txByte, rxBit)
-    triggerReset <- triggerReaderBtn -< btns
+    (_rxByte, txBit) <- uartDf baud -< (txByte, rxBit)
+    triggerReset <- triggerResetButtons -< btns
     packet <- ila (SNat @100) (==300) counter -< triggerReset
     txByte <- ps2df -< packet
     idC -< txBit
