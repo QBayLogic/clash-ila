@@ -24,6 +24,21 @@ triggerReader = Circuit exposeIn
    where
     out = (pure (), DM.isJust <$> incoming)
 
+triggerReaderBtn ::
+  (HiddenClockResetEnable dom) =>
+  Circuit (CSignal dom (BitVector 4)) (CSignal dom Bool)
+triggerReaderBtn = Circuit exposeIn
+ where
+  exposeIn (incoming, _) = out
+   where
+    reg = register False $ liftA2 change incoming reg
+
+    change 1 _ = True
+    change 2 _ = False
+    change _ r = r
+
+    out = (pure (), reg)
+
 topLogicUart ::
   forall dom baud.
   (HiddenClockResetEnable dom, ValidBaud dom baud) =>
