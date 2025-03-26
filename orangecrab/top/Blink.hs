@@ -55,14 +55,14 @@ topLogicUart baud btns rx = go
   counter :: (HiddenClockResetEnable dom) => Signal dom (BitVector 9)
   counter = register 0 $ satAdd SatWrap 1 <$> counter
 
-  Circuit main = circuit $ \(rxBit) -> do
-    (activation, txBit) <- uartDf baud -< (txByte, rxBit)
-    triggerReset <- triggerReader -< activation
-    packet <- ilaProbe (SNat @1500) (==300) counter -< triggerReset
+  Circuit main = circuit $ \(btns, rxBit) -> do
+    (_activation, txBit) <- uartDf baud -< (txByte, rxBit)
+    triggerReset <- triggerReaderBtn -< btns
+    packet <- ila (SNat @100) (==300) counter -< triggerReset
     txByte <- ps2df -< packet
     idC -< txBit
 
-  go = snd $ main (rx, pure ())
+  go = snd $ main ((btns, rx), pure ())
 
 topEntity ::
   "CLK" ::: Clock Dom48 ->
