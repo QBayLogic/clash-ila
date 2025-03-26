@@ -4,6 +4,7 @@ use std::path::PathBuf;
 use clap::{Args, Parser, Subcommand};
 use serialport::SerialPort;
 
+mod config;
 mod packet;
 mod vcd;
 
@@ -62,6 +63,14 @@ struct AnalysisArgs {
     #[arg(short, long, help = "Path to serial port to use")]
     port: PathBuf,
 
+    #[arg(
+        short = 'c',
+        long,
+        default_value = "ilaconf.json",
+        help = "Path to config file"
+    )]
+    config: PathBuf,
+
     #[arg(short, long, default_value_t = 9600, help = "Sets baud rate")]
     baud: u32,
 }
@@ -73,6 +82,14 @@ struct VcdArgs {
 
     #[arg(short = 'o', long, help = "Path to output the VCD file")]
     path: PathBuf,
+
+    #[arg(
+        short = 'c',
+        long,
+        default_value = "ilaconf.json",
+        help = "Path to config file"
+    )]
+    config: PathBuf,
 
     #[arg(short, long, default_value_t = String::from("TopLevel"), help = "The name of the toplevel to display in the VCD")]
     toplevel: String,
@@ -165,13 +182,18 @@ fn monitor_port(port: Box<dyn SerialPort>, args: MonitorArgs) {
 }
 
 /// `analysis` CLI handler
-fn packet_analysis(port: Box<dyn SerialPort>, _: AnalysisArgs) {
+fn packet_analysis(port: Box<dyn SerialPort>, args: AnalysisArgs) {
     println!(
         "Analysing packets on {}",
         port.name().unwrap_or(String::from("<unknown>"))
     );
 
-    let rx = packet::packet_loop(port.bytes());
+    //TODO: MAKE THIS A LOOP FOR EACH ILA INSTEAD OF JUST USING THE FIRST ONE!!!!
+    let configs = config::read_config(&args.config)
+        .expect(&format!("File at {:?} contained errors", &args.config));
+    let config = configs.ilas[0].clone();
+
+    let rx = packet::packet_loop(port.bytes(), config);
     for packet in rx {
         println!("Valid packet recieved: {packet:?}");
     }
@@ -184,17 +206,21 @@ fn vcd_dump(port: Box<dyn SerialPort>, args: VcdArgs) {
         port.name().unwrap_or(String::from("<unknown>"))
     );
 
-    let rx = packet::packet_loop(port.bytes());
+    //TODO: MAKE THIS A LOOP FOR EACH ILA INSTEAD OF JUST USING THE FIRST ONE!!!!
+    let configs = config::read_config(&args.config)
+        .expect(&format!("File at {:?} contained errors", &args.config));
+    let config = configs.ilas[0].clone();
+
+    let rx = packet::packet_loop(port.bytes(), config.clone());
     let mut rx_iter = rx.iter();
 
-    let packet = loop {
-        if let Some(packet::Packets::Data(packet)) = rx_iter.next() {
-            break packet;
+    let signals = loop {
+        if let Some(packet::Packets::Data(signals)) = rx_iter.next() {
+            break signals;
         }
     };
 
-    vcd::write_to_vcd(&vec![packet], &args.toplevel, args.path)
-        .expect("Failed to generate VCD file")
+    vcd::write_to_vcd(&signals, &config, args.path).expect("Failed to generate VCD file");
 }
 
 fn main() {
