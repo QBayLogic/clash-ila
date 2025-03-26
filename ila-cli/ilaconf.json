@@ -1,0 +1,23 @@
+{
+    "ilas": [
+        {
+            "toplevel": "Counters",
+            "bufferSize": 100,
+            "hash": "unused",
+            "signals": [
+                {
+                    "name": "counter0",
+                    "width": 9
+                },
+                {
+                    "name": "counter1",
+                    "width": 9
+                },
+                {
+                    "name": "counter2",
+                    "width": 9
+                }
+            ]
+        }
+    ]
+}
