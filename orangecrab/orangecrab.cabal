@@ -58,6 +58,11 @@ common common-options
     base,
     hedgehog >= 1.0.3 && < 1.6,
     split,
+    template-haskell,
+    aeson,
+    th-abstraction,
+    th-expand-syns,
+    hashable,
     clash-cores,
     clash-lib,
     clash-prelude,
@@ -78,6 +83,7 @@ library
     Ila
     Communication
     Packet
+    ConfigGen
 
 test-suite unittests
   import: common-options
