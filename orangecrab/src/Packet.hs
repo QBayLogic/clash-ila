@@ -75,7 +75,7 @@ dataPacket _ = packetizerC headerTransfer headerTransfer
   headerTransfer oldMeta =
     IlaDataHeader
       { version = 0x0001
-      , id = fst oldMeta
+      , hash = fst oldMeta
       , width = natToNum @(BitSize t)
       , length = (natToNum @(BitSize t `DivRU` 8)) * (unpack . resize . pack $ snd oldMeta)
       }
