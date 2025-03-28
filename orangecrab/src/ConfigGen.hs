@@ -1,6 +1,5 @@
 {-# LANGUAGE DuplicateRecordFields #-}
 {-# LANGUAGE OverloadedRecordDot #-}
-{-# LANGUAGE OverloadedRecordUpdate #-}
 {-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE TemplateHaskellQuotes #-}
 {-# LANGUAGE NoFieldSelectors #-}
@@ -41,7 +40,7 @@ writeConfig ::
   -- | The same list of signals, but then bundled together
   Signal dom a ->
   -- | a `IlaConfig` in AST form, this should be passed directly to the ILA
-  Q Exp
+  IO (Exp)
 writeConfig size toplevelName namedSignals bundledSignals = do
   let sizeNames = getSizeAndName namedSignals
 
@@ -54,7 +53,7 @@ writeConfig size toplevelName namedSignals bundledSignals = do
 
   let genIlas = GenIlas [hashedIla]
 
-  runIO (encodeFile "ilaconf.json" genIlas)
+  encodeFile "ilaconf.json" genIlas
 
   let ilaConf =
         IlaConfig
@@ -64,6 +63,29 @@ writeConfig size toplevelName namedSignals bundledSignals = do
           }
 
   [|ilaConf|]
+
+ilaConfig ::
+  forall dom a n ts.
+  ( KnownNat n
+  , NamedSignal ts
+  , Lift a
+  ) =>
+  -- | How many samples should it capture of each signal?
+  SNat n ->
+  -- | Merely an identifier, recommended to be the name of the toplevel design, but it can be any name you fancy
+  String ->
+  -- | A list of signals and labels (Strings) tupled together to sample
+  HList ts ->
+  -- | The same list of signals, but then bundled together
+  Signal dom a ->
+  -- | The ILA configuration itself
+  IlaConfig n (Signal dom a)
+ilaConfig size toplevelName namedSignals bundledSignals =
+  IlaConfig
+    { hash = 0
+    , size = size
+    , tracing = bundledSignals
+    }
 
 -- A record containing the actual configuration of the ILA
 data IlaConfig n a = IlaConfig
