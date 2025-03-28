@@ -60,8 +60,8 @@ pub enum ParseErr {
 /// processing done to it.
 #[derive(Debug)]
 struct RawDataPacket {
-    /// The Clash signal ID
-    id: u16,
+    /// The ILA configuration hash
+    hash: u32,
     /// The width of the signal in bits
     width: u16,
     /// How many samples this transaction contained
@@ -79,7 +79,7 @@ impl RawDataPacket {
         }
 
         let mut raw_packet = RawDataPacket {
-            id: iter.next_u16().ok_or(ParseErr::NeedsMoreBytes)?,
+            hash: iter.next_u32().ok_or(ParseErr::NeedsMoreBytes)?,
             width: iter.next_u16().ok_or(ParseErr::NeedsMoreBytes)?,
             length: iter.next_u32().ok_or(ParseErr::NeedsMoreBytes)?,
             buffer: vec![],
@@ -106,6 +106,10 @@ pub struct Signal {
 
 impl RawDataPacket {
     fn into_signals(&self, config: &IlaConfig) -> Option<Vec<Signal>> {
+        // Not quite sure if this is considered ugly, it's a nice oneliner, but god is it abusing
+        // syntax
+        let true = self.hash == config.hash else { return None };
+
         let bitvecs: Vec<BitVec<u8, Msb0>> = self
             .buffer
             .chunks(config.transaction_byte_count())

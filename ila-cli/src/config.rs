@@ -15,7 +15,7 @@ pub struct IlaConfig {
     pub toplevel: String,
     #[serde(rename = "bufferSize")]
     pub buffer_size: usize,
-    pub hash: String,
+    pub hash: u32,
     pub signals: Vec<IlaSignal>,
 }
 
