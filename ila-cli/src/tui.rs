@@ -19,7 +19,11 @@ struct TextPrompt {
 
 impl Widget for TextPrompt {
     fn render(self, area: layout::Rect, buf: &mut buffer::Buffer) {
-        let limit: String = self.input.chars().take(area.width as usize).collect();
+        let limit: String = self
+            .input
+            .chars()
+            .skip(self.input.len().saturating_sub(area.width as usize))
+            .collect();
         buf.set_string(area.x, area.y, limit, Style::default());
     }
 }
