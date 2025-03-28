@@ -1,3 +1,6 @@
+{-# LANGUAGE DuplicateRecordFields #-}
+{-# LANGUAGE OverloadedRecordDot #-}
+{-# LANGUAGE NoFieldSelectors #-}
 {-# OPTIONS_GHC -fconstraint-solver-iterations=10 #-}
 {-# OPTIONS_GHC -fplugin=Protocols.Plugin #-}
 
@@ -6,6 +9,7 @@ module Ila where
 import Clash.Prelude
 import Packet
 import RingBuffer
+import ConfigGen
 
 import Data.Data
 
@@ -51,10 +55,10 @@ triggerController ::
   , 1 <= BitSize a `DivRU` 8
   , 1 <= size
   ) =>
+  -- | The configuration of the ILA
+  IlaConfig size (Signal dom a) ->
   -- | Trigger predicate
   (a -> Bool) ->
-  -- | The input signal to probe
-  Signal dom a ->
   -- | The ILA Core
   ( Signal dom a ->
     Signal dom Bool ->
@@ -66,21 +70,21 @@ triggerController ::
   Circuit
     (CSignal dom Bool)
     (PacketStream dom (BitSize a `DivRU` 8) IlaDataPacket)
-triggerController predicate i core = Circuit exposeIn
+triggerController config predicate core = Circuit exposeIn
  where
   exposeIn (triggerRst, backpressure) = out
    where
     oldTriggered :: Signal dom Bool
     oldTriggered = register False triggered
     triggered :: Signal dom Bool
-    triggered = mux triggerRst (pure False) oldTriggered .||. (predicate <$> i)
+    triggered = mux triggerRst (pure False) oldTriggered .||. (predicate <$> config.tracing)
 
     shouldSample :: Signal dom Bool
     shouldSample = not <$> triggered
 
-    injectId oldMeta = (0, oldMeta)
+    injectId oldMeta = (config.hash, oldMeta)
 
-    buffer = core i shouldSample triggerRst
+    buffer = core config.tracing shouldSample triggerRst
     Circuit packet = dataPacket (Proxy :: Proxy a) <| mapMeta injectId <| ringBufferReaderPS buffer
 
     out = (pure (), snd $ packet (triggered, backpressure))
@@ -94,15 +98,13 @@ ila ::
   , 1 <= BitSize a `DivRU` 8
   , 1 <= size
   ) =>
-  -- | Maximum sample count
-  SNat size ->
+  -- | The configuration of the ILA
+  IlaConfig size (Signal dom a) ->
   -- | Trigger predicate
   (a -> Bool) ->
-  -- | Signal to probe
-  Signal dom a ->
   -- | Circuit outputting the content of the buffer whenever the predicate has been triggered
   -- The input signal is to clear the trigger
   Circuit
     (CSignal dom Bool)
     (PacketStream dom (BitSize a `DivRU` 8) IlaFinalizedPacket)
-ila size predicate sig = finalizePacket <| (triggerController predicate sig $ ilaCore size (pure True))
+ila config predicate = finalizePacket <| (triggerController config predicate $ ilaCore config.size (pure True))

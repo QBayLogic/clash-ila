@@ -82,22 +82,18 @@ The heart of the ILA data communications, this packet contains the raw data capt
 The captured data will be chopped into bytes and sent over any underlaying network layer
 
 Size (in bytes): | 2 | 2 | 2 | 4 | ... |
-Type:            | V | I | W | L |  D  |
+Type:            | V | H | W | L |  D  |
 Packet type: 0x0001
 Description:
   V: Version number, for this version it should be `0x0001`
-  I: Data ID, an identifier for the Clash `signal` being sampled
+  H: ILA Hash, used to identify the ILA this datapacket is associated with
   W: Data width, specifies the width of the data in bits, note that data MUST be byte aligned
   L: Length of the data stream in bytes
   D: The data from the ILA, length specified by L in chunks of bytes, each bit is a logical level of a pin
-NOTES:
- Data ID only gives enough information to differentiate between different Clash `Signal`s. To know
- from which ILA the data id comes from. Another type of packet will determine which IDs belong to
- which ILAs.
 -}
 data IlaDataPacket = IlaDataPacket
   { version :: BitVector 16
-  , id :: BitVector 16
+  , hash :: BitVector 32
   , width :: BitVector 16
   , length :: BitVector 32
   }
@@ -119,7 +115,7 @@ dataPacket ::
   Proxy t ->
   -- | Circuit which takes in a datastream with the length as metadata and outputs packaged data
   Circuit
-    (PacketStream dom dataWidth (BitVector 16, Index size))
+    (PacketStream dom dataWidth (BitVector 32, Index size))
     (PacketStream dom dataWidth IlaDataPacket)
 dataPacket _ = packetizerC metaTransfer headerTransfer
  where
@@ -127,7 +123,7 @@ dataPacket _ = packetizerC metaTransfer headerTransfer
   headerTransfer oldMeta =
     IlaDataPacket
       { version = 0x0001
-      , id = fst oldMeta
+      , hash = fst oldMeta
       , width = natToNum @(BitSize t)
       , length = (natToNum @(BitSize t `DivRU` 8)) * (resize $ pack $ snd oldMeta)
       }

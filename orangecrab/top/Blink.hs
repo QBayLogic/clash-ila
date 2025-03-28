@@ -1,3 +1,4 @@
+{-# LANGUAGE TemplateHaskell #-}
 {-# OPTIONS_GHC -fconstraint-solver-iterations=10 #-}
 {-# OPTIONS_GHC -fplugin=Protocols.Plugin #-}
 
@@ -7,12 +8,17 @@ import Clash.Annotations.TH
 import Clash.Cores.UART (ValidBaud)
 import Clash.Prelude
 
+import Language.Haskell.TH
+import Language.Haskell.TH.Syntax
+
 import Data.Maybe qualified as DM
 
 import Communication
+import ConfigGen
+import Data.HList
 import Domain
-import Pmod
 import Ila
+import Pmod
 import Protocols
 
 -- | Resets the ILA trigger whenever we receive an incoming byte from UART
@@ -55,13 +61,26 @@ topLogicUart ::
 topLogicUart baud btns rx = go
  where
   -- Simple demo signal to 'debug'
-  counter :: (HiddenClockResetEnable dom) => Signal dom (BitVector 9)
-  counter = register 0 $ satAdd SatWrap 1 <$> counter
+  counter0 :: (HiddenClockResetEnable dom) => Signal dom (BitVector 9)
+  counter0 = register 0 $ satAdd SatWrap 1 <$> counter0
+  counter1 :: (HiddenClockResetEnable dom) => Signal dom (BitVector 9)
+  counter1 = register 20 $ satAdd SatWrap 1 <$> counter1
+  counter2 :: (HiddenClockResetEnable dom) => Signal dom (BitVector 9)
+  counter2 = register 40 $ satAdd SatWrap 1 <$> counter2
 
   Circuit main = circuit $ \(btns, rxBit) -> do
     (_rxByte, txBit) <- uartDf baud -< (txByte, rxBit)
     triggerReset <- triggerResetButtons -< btns
-    packet <- ila (SNat @100) (==300) counter -< triggerReset
+    packet <-
+      ila
+        ( ilaConfig
+            d100
+            "name"
+            ((counter0, "Base") .*. (counter1, "+20") .*. (counter2, "+40") .*. HNil)
+            (bundle (counter0, counter1, counter2))
+        )
+        (\(a, _, _) -> a == 300)
+        -< triggerReset
     txByte <- ps2df -< packet
     idC -< txBit
 
