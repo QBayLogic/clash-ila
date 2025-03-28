@@ -7,6 +7,7 @@ use serialport::SerialPort;
 mod config;
 mod packet;
 mod vcd;
+mod tui;
 
 #[derive(Parser, Debug)]
 #[command(version, about)]
@@ -20,6 +21,8 @@ struct Cli {
 enum Subcommands {
     /// Generate a VCD dump from incoming signals
     Vcd(VcdArgs),
+    /// Enter the TUI interface
+    Tui(TuiArgs),
     /// Analyse incoming packets and attempt to parse them according to packet formats
     Analysis(AnalysisArgs),
     /// Monitor output of the port, all data is displayed in hex
@@ -56,6 +59,15 @@ struct MonitorArgs {
         help = "Amount of bytes displayed per space"
     )]
     max_per_space: u32,
+}
+
+#[derive(Args, Debug)]
+struct TuiArgs {
+    #[arg(short, long, help = "Path to serial port to use")]
+    port: PathBuf,
+
+    #[arg(short, long, default_value_t = 9600, help = "Sets baud rate")]
+    baud: u32,
 }
 
 #[derive(Args, Debug)]
@@ -116,6 +128,13 @@ impl ParseSubcommand for MonitorArgs {
     fn parse(self) {
         let port = find_specified_port(&self.port, self.baud);
         monitor_port(port, self)
+    }
+}
+
+impl ParseSubcommand for TuiArgs {
+    fn parse(self) {
+        //let port = find_specified_port(&self.port, self.baud);
+        let _ = tui::TuiSession::new();
     }
 }
 
@@ -230,6 +249,7 @@ fn main() {
         Subcommands::Vcd(args) => args.parse(),
         Subcommands::Analysis(args) => args.parse(),
         Subcommands::Monitor(args) => args.parse(),
+        Subcommands::Tui(args) => args.parse(),
         Subcommands::List => {
             let ports =
                 serialport::available_ports().expect("Unable to iterate serial devices. Exiting.");
