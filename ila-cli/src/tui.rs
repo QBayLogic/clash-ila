@@ -3,7 +3,10 @@ use std::{
     time::Duration,
 };
 
-use crossterm::event::{Event as TuiEvent, KeyModifiers};
+use crossterm::{
+    cursor::MoveTo,
+    event::{Event as TuiEvent, KeyModifiers},
+};
 use crossterm::{
     event::{poll, read, KeyCode},
     execute,
@@ -15,6 +18,8 @@ use tui::{backend::CrosstermBackend, layout::Rect, style::Style, widgets::*, *};
 struct TextPrompt {
     title: String,
     input: String,
+    cursor: usize,
+    visible: usize,
 }
 
 impl Widget for TextPrompt {
@@ -77,6 +82,13 @@ impl TuiSession {
                     around.width.saturating_sub(2),
                     around.height.saturating_sub(2),
                 );
+
+                f.set_cursor(
+                    (center.x + text_prompt.cursor.saturating_sub(text_prompt.visible) as u16)
+                        .min(size.width),
+                    center.y,
+                );
+
                 f.render_widget(text_prompt, center);
             }
         });
@@ -92,37 +104,55 @@ impl TuiSession {
                     Ok(TuiEvent::Resize(..)) => {
                         self.render();
                         continue;
-                    },
-                    _ => continue
+                    }
+                    _ => continue,
                 };
 
                 if event.code == KeyCode::Esc {
                     self.state = TuiState::Main
                 }
 
-                match (&mut self.state, event.code) {
-                    (TuiState::Main, KeyCode::Char('c')) => {
-                        if event.modifiers == KeyModifiers::CONTROL {
-                            break;
-                        }
-                    },
-                    (TuiState::Main, KeyCode::Char('v')) => {
+                match (&mut self.state, event.code, event.modifiers) {
+                    (TuiState::Main, KeyCode::Char('c'), KeyModifiers::CONTROL) => {
+                        break;
+                    }
+                    (TuiState::Main, KeyCode::Char('v'), _) => {
+                        let default = "dump.vcd";
                         self.state = TuiState::InPrompt(TextPrompt {
-                            title: String::from("Name of file to save VCD too"),
-                            input: String::new(),
+                            title: format!("Save VCD file (default: {default})"),
+                            input: default.to_string(),
+                            cursor: default.len(),
+                            visible: 0,
                         })
-                    },
-                    (TuiState::InPrompt(text_prompt), KeyCode::Char(c)) => {
-                        text_prompt.input.push(c);
-                    },
-                    (TuiState::InPrompt(text_prompt), KeyCode::Backspace) => {
-                        text_prompt.input.pop();
-                    },
-                    _ => ()
+                    }
+                    (TuiState::InPrompt(text_prompt), KeyCode::Char(c), _) => {
+                        text_prompt.input.insert(text_prompt.cursor, c);
+                        text_prompt.cursor += 1;
+                    }
+                    (TuiState::InPrompt(text_prompt), KeyCode::Backspace, _) => {
+                        if text_prompt.cursor != 0 && text_prompt.cursor <= text_prompt.input.len()
+                        {
+                            text_prompt.input.remove(text_prompt.cursor - 1);
+                            text_prompt.cursor = text_prompt.cursor.saturating_sub(1);
+                        }
+                    }
+                    (TuiState::InPrompt(text_prompt), KeyCode::Delete, _) => {
+                        if text_prompt.cursor != text_prompt.input.len()
+                            && text_prompt.cursor <= text_prompt.input.len()
+                        {
+                            text_prompt.input.remove(text_prompt.cursor);
+                        }
+                    }
+                    (TuiState::InPrompt(text_prompt), KeyCode::Left, _) => {
+                        text_prompt.cursor = text_prompt.cursor.saturating_sub(1);
+                    }
+                    (TuiState::InPrompt(text_prompt), KeyCode::Right, _) => {
+                        text_prompt.cursor = text_prompt.input.len().min(text_prompt.cursor + 1);
+                    }
+                    _ => (),
                 }
 
-                if TuiState::Main == self.state {
-                }
+                if TuiState::Main == self.state {}
 
                 self.render();
             }
