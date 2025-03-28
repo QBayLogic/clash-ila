@@ -63,6 +63,7 @@ common common-options
     th-abstraction,
     th-expand-syns,
     hashable,
+    HList,
     clash-cores,
     clash-lib,
     clash-prelude,
