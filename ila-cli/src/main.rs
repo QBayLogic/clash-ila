@@ -134,7 +134,9 @@ impl ParseSubcommand for MonitorArgs {
 impl ParseSubcommand for TuiArgs {
     fn parse(self) {
         //let port = find_specified_port(&self.port, self.baud);
-        let _ = tui::TuiSession::new();
+        let Ok(mut session) = tui::TuiSession::new() else { return };
+
+        session.main_loop();
     }
 }
 
