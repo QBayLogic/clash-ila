@@ -1,7 +1,4 @@
-use std::{
-    io::{self},
-    time::Duration,
-};
+use std::{io, time::Duration};
 
 use crossterm::event::{Event as TuiEvent, KeyModifiers};
 use crossterm::{
@@ -9,10 +6,20 @@ use crossterm::{
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
-use tui::{backend::CrosstermBackend, layout::Rect, style::Style, widgets::*, *};
+use tui::{
+    backend::CrosstermBackend,
+    layout::{Constraint, Layout, Margin, Rect},
+    style::Style,
+    widgets::*,
+    *,
+};
 
-// TODO: make it a stateful widget, where the state is the cursor
-// This is because you need to know the size it renders at to know when to make the cursor move
+const KEYBIND_TEXT: &'static str = r#"  C-c   ---   Exit
+  c     ---   Change trigger logic
+  r     ---   Reset trigger
+  s     ---   Request sample to be sent again
+  v     ---   Write signals to VCD dump
+"#;
 
 #[derive(Debug, PartialEq, Eq, Clone)]
 struct TextPromptState {
@@ -97,8 +104,27 @@ impl TuiSession {
     pub fn render(&mut self) {
         let _ = self.term.draw(|f| {
             let size = f.size();
-            let title_block = Block::default().title("ILA - Port ").borders(Borders::ALL);
+            let title_block = Block::default()
+                .title("ILA - Port /dev/???")
+                .borders(Borders::ALL);
             f.render_widget(title_block, size);
+
+            let help_menu = Paragraph::new(KEYBIND_TEXT)
+                .block(Block::default().title("Keybinds").borders(Borders::ALL));
+            let info_menu = Paragraph::new("Captured ? signals")
+                .block(Block::default().title("Info").borders(Borders::ALL));
+            let main_layout = Layout::default()
+                .direction(layout::Direction::Vertical)
+                .constraints([
+                    Constraint::Length(KEYBIND_TEXT.lines().count() as u16 + 2),
+                    Constraint::Min(1),
+                ])
+                .split(size.inner(&Margin {
+                    vertical: 1,
+                    horizontal: 1,
+                }));
+            f.render_widget(help_menu, main_layout[0]);
+            f.render_widget(info_menu, main_layout[1]);
 
             if let TuiState::InPrompt(text_prompt) = &mut self.state {
                 let width = size.width.saturating_sub(10);
@@ -108,6 +134,8 @@ impl TuiSession {
                     width.min(size.width),
                     3.min(size.height),
                 );
+
+                f.render_widget(Clear, around);
                 let decoration = Block::default()
                     .title(text_prompt.title.as_str())
                     .borders(Borders::ALL);
@@ -153,7 +181,7 @@ impl TuiSession {
                         break;
                     }
                     (TuiState::Main, KeyCode::Char('v'), _) => {
-                        let default = "dump.vcd-abcdefghijklmnopqrstuvwxyz1234567890";
+                        let default = "dump.vcd";
                         self.state = TuiState::InPrompt(TextPromptState {
                             title: format!("Save VCD file (default: {default})"),
                             input: default.to_string(),
