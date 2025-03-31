@@ -1,3 +1,4 @@
+use std::sync::mpsc::Receiver;
 use std::{io, time::Duration};
 
 use crossterm::event::{Event as TuiEvent, KeyEvent, KeyModifiers};
@@ -13,6 +14,8 @@ use tui::{
     widgets::*,
     *,
 };
+
+use crate::packet::*;
 
 const KEYBIND_TEXT: &'static str = r#"  C-c   ---   Exit
   c     ---   Change trigger logic
@@ -86,6 +89,7 @@ enum TuiState {
 pub struct TuiSession {
     term: Terminal<CrosstermBackend<io::Stdout>>,
     state: TuiState,
+    captured: Vec<Vec<Signal>>,
 }
 
 impl TuiSession {
@@ -95,9 +99,11 @@ impl TuiSession {
         let mut stdout = io::stdout();
         execute!(stdout, EnterAlternateScreen)?;
         let backend = CrosstermBackend::new(stdout);
+
         Ok(TuiSession {
             term: Terminal::new(backend)?,
             state: TuiState::Main,
+            captured: vec![],
         })
     }
 
@@ -111,7 +117,7 @@ impl TuiSession {
 
             let help_menu = Paragraph::new(KEYBIND_TEXT)
                 .block(Block::default().title("Keybinds").borders(Borders::ALL));
-            let info_menu = Paragraph::new("Captured ? signals")
+            let info_menu = Paragraph::new(format!("Captured {} signals", self.captured.len()))
                 .block(Block::default().title("Info").borders(Borders::ALL));
             let main_layout = Layout::default()
                 .direction(layout::Direction::Vertical)
@@ -206,14 +212,22 @@ impl TuiSession {
         }
 
         self.render();
-        
+
         false
     }
 
-    pub fn main_loop(&mut self) {
+    pub fn main_loop(&mut self, incoming_signals: Receiver<Packets>) {
         self.render();
 
         loop {
+            if let Ok(packet) = incoming_signals.try_recv() {
+                match packet {
+                    Packets::Data(signals) => self.captured.push(signals),
+                }
+
+                self.render();
+            }
+
             if let Ok(true) = poll(Duration::ZERO) {
                 let event = match read() {
                     Ok(TuiEvent::Key(key)) => key,

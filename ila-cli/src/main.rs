@@ -66,6 +66,14 @@ struct TuiArgs {
     #[arg(short, long, help = "Path to serial port to use")]
     port: PathBuf,
 
+    #[arg(
+        short = 'c',
+        long,
+        default_value = "ilaconf.json",
+        help = "Path to config file"
+    )]
+    config: PathBuf,
+
     #[arg(short, long, default_value_t = 9600, help = "Sets baud rate")]
     baud: u32,
 }
@@ -133,10 +141,16 @@ impl ParseSubcommand for MonitorArgs {
 
 impl ParseSubcommand for TuiArgs {
     fn parse(self) {
-        //let port = find_specified_port(&self.port, self.baud);
+        let port = find_specified_port(&self.port, self.baud);
         let Ok(mut session) = tui::TuiSession::new() else { return };
 
-        session.main_loop();
+        let configs = config::read_config(&self.config)
+            .expect(&format!("File at {:?} contained errors", &self.config));
+        let config = configs.ilas[0].clone();
+
+        let rx = packet::packet_loop(port.bytes(), config.clone());
+
+        session.main_loop(rx);
     }
 }
 
