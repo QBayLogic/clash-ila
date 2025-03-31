@@ -1,6 +1,6 @@
 use std::{io, time::Duration};
 
-use crossterm::event::{Event as TuiEvent, KeyModifiers};
+use crossterm::event::{Event as TuiEvent, KeyEvent, KeyModifiers};
 use crossterm::{
     event::{poll, read, KeyCode},
     execute,
@@ -158,6 +158,58 @@ impl TuiSession {
         });
     }
 
+    /// Handle the keypresses. Returns wether or not it should break out of the main loop or not
+    fn on_key_event(&mut self, event: KeyEvent) -> bool {
+        if event.code == KeyCode::Esc {
+            self.state = TuiState::Main
+        }
+
+        match (&mut self.state, event.code, event.modifiers) {
+            (TuiState::Main, KeyCode::Char('c'), KeyModifiers::CONTROL) => {
+                return true;
+            }
+            (TuiState::Main, KeyCode::Char('v'), _) => {
+                let default = "dump.vcd";
+                self.state = TuiState::InPrompt(TextPromptState {
+                    title: format!("Save VCD file (default: {default})"),
+                    input: default.to_string(),
+                    cursor: default.len(),
+                    visible: 0,
+                    cursor_offset: 0,
+                    render_bounds: (0, u16::MAX),
+                })
+            }
+            (TuiState::InPrompt(text_prompt), KeyCode::Char(c), _) => {
+                text_prompt.input.insert(text_prompt.cursor, c);
+                text_prompt.right();
+            }
+            (TuiState::InPrompt(text_prompt), KeyCode::Backspace, _) => {
+                if text_prompt.cursor != 0 && text_prompt.cursor <= text_prompt.input.len() {
+                    text_prompt.input.remove(text_prompt.cursor - 1);
+                    text_prompt.left();
+                }
+            }
+            (TuiState::InPrompt(text_prompt), KeyCode::Delete, _) => {
+                if text_prompt.cursor != text_prompt.input.len()
+                    && text_prompt.cursor <= text_prompt.input.len()
+                {
+                    text_prompt.input.remove(text_prompt.cursor);
+                }
+            }
+            (TuiState::InPrompt(text_prompt), KeyCode::Left, _) => {
+                text_prompt.left();
+            }
+            (TuiState::InPrompt(text_prompt), KeyCode::Right, _) => {
+                text_prompt.right();
+            }
+            _ => (),
+        }
+
+        self.render();
+        
+        false
+    }
+
     pub fn main_loop(&mut self) {
         self.render();
 
@@ -172,55 +224,9 @@ impl TuiSession {
                     _ => continue,
                 };
 
-                if event.code == KeyCode::Esc {
-                    self.state = TuiState::Main
-                }
-
-                match (&mut self.state, event.code, event.modifiers) {
-                    (TuiState::Main, KeyCode::Char('c'), KeyModifiers::CONTROL) => {
-                        break;
-                    }
-                    (TuiState::Main, KeyCode::Char('v'), _) => {
-                        let default = "dump.vcd";
-                        self.state = TuiState::InPrompt(TextPromptState {
-                            title: format!("Save VCD file (default: {default})"),
-                            input: default.to_string(),
-                            cursor: default.len(),
-                            visible: 0,
-                            cursor_offset: 0,
-                            render_bounds: (0, u16::MAX),
-                        })
-                    }
-                    (TuiState::InPrompt(text_prompt), KeyCode::Char(c), _) => {
-                        text_prompt.input.insert(text_prompt.cursor, c);
-                        text_prompt.right();
-                    }
-                    (TuiState::InPrompt(text_prompt), KeyCode::Backspace, _) => {
-                        if text_prompt.cursor != 0 && text_prompt.cursor <= text_prompt.input.len()
-                        {
-                            text_prompt.input.remove(text_prompt.cursor - 1);
-                            text_prompt.left();
-                        }
-                    }
-                    (TuiState::InPrompt(text_prompt), KeyCode::Delete, _) => {
-                        if text_prompt.cursor != text_prompt.input.len()
-                            && text_prompt.cursor <= text_prompt.input.len()
-                        {
-                            text_prompt.input.remove(text_prompt.cursor);
-                        }
-                    }
-                    (TuiState::InPrompt(text_prompt), KeyCode::Left, _) => {
-                        text_prompt.left();
-                    }
-                    (TuiState::InPrompt(text_prompt), KeyCode::Right, _) => {
-                        text_prompt.right();
-                    }
-                    _ => (),
-                }
-
-                if TuiState::Main == self.state {}
-
-                self.render();
+                if self.on_key_event(event) {
+                    break;
+                };
             }
         }
     }
