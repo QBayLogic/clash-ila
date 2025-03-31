@@ -1,3 +1,4 @@
+use std::io::{BufWriter, Write};
 use std::sync::mpsc::Receiver;
 use std::{io, time::Duration};
 
@@ -93,6 +94,7 @@ pub struct TuiSession<'a> {
     term: Terminal<CrosstermBackend<io::Stdout>>,
     state: TuiState,
     config: &'a IlaConfig,
+    log: String,
     captured: Vec<Vec<Signal>>,
 }
 
@@ -108,6 +110,7 @@ impl<'a> TuiSession<'a> {
             term: Terminal::new(backend)?,
             state: TuiState::Main,
             config,
+            log: String::new(),
             captured: vec![],
         })
     }
@@ -122,8 +125,12 @@ impl<'a> TuiSession<'a> {
 
             let help_menu = Paragraph::new(KEYBIND_TEXT)
                 .block(Block::default().title("Keybinds").borders(Borders::ALL));
-            let info_menu = Paragraph::new(format!("Captured {} signals", self.captured.len()))
-                .block(Block::default().title("Info").borders(Borders::ALL));
+            let info_menu = Paragraph::new(format!(
+                "Captured {} signals\n{}",
+                self.captured.len(),
+                self.log
+            ))
+            .block(Block::default().title("Info").borders(Borders::ALL));
             let main_layout = Layout::default()
                 .direction(layout::Direction::Vertical)
                 .constraints([
@@ -170,7 +177,7 @@ impl<'a> TuiSession<'a> {
     }
 
     /// Handle the keypresses. Returns wether or not it should break out of the main loop or not
-    fn on_key_event(&mut self, event: KeyEvent) -> bool {
+    fn on_key_event<T: Write>(&mut self, event: KeyEvent, tx_port: &mut T) -> bool {
         if event.code == KeyCode::Esc {
             self.state = TuiState::Main
         }
@@ -178,6 +185,11 @@ impl<'a> TuiSession<'a> {
         match (&mut self.state, event.code, event.modifiers) {
             (TuiState::Main, KeyCode::Char('c'), KeyModifiers::CONTROL) => {
                 return true;
+            }
+            (TuiState::Main, KeyCode::Char('r'), _) => {
+                if let Err(err) = send_packet(tx_port, &ResetTriggerPacket) {
+                    self.log = format!("{}\nError: {}", self.log, err);
+                }
             }
             (TuiState::Main, KeyCode::Char('v'), _) => {
                 let default = "dump.vcd";
@@ -228,7 +240,7 @@ impl<'a> TuiSession<'a> {
         false
     }
 
-    pub fn main_loop(&mut self, incoming_signals: Receiver<Packets>) {
+    pub fn main_loop<T: Write>(&mut self, incoming_signals: Receiver<Packets>, mut tx_port: T) {
         self.render();
 
         loop {
@@ -250,7 +262,7 @@ impl<'a> TuiSession<'a> {
                     _ => continue,
                 };
 
-                if self.on_key_event(event) {
+                if self.on_key_event(event, &mut tx_port) {
                     break;
                 };
             }
