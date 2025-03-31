@@ -8,9 +8,6 @@ import Clash.Annotations.TH
 import Clash.Cores.UART (ValidBaud)
 import Clash.Prelude
 
-import Language.Haskell.TH
-import Language.Haskell.TH.Syntax
-
 import Data.Maybe qualified as DM
 
 import Communication
@@ -20,6 +17,7 @@ import Domain
 import Ila
 import Pmod
 import Protocols
+import Packet
 
 -- | Resets the ILA trigger whenever we receive an incoming byte from UART
 triggerResetUart ::
@@ -69,9 +67,9 @@ topLogicUart baud btns rx = go
   counter2 :: (HiddenClockResetEnable dom) => Signal dom (BitVector 9)
   counter2 = register 40 $ satAdd SatWrap 1 <$> counter2
 
-  Circuit main = circuit $ \(btns, rxBit) -> do
-    (_rxByte, txBit) <- uartDf baud -< (txByte, rxBit)
-    triggerReset <- triggerResetButtons -< btns
+  Circuit main = circuit $ \(rxBit) -> do
+    (rxByte, txBit) <- uartDf baud -< (txByte, rxBit)
+    triggerReset <- shouldReset <| deserializeToPacket -< rxByte
     packet <-
       ila
         ( ilaConfig
@@ -85,7 +83,7 @@ topLogicUart baud btns rx = go
     txByte <- ps2df -< packet
     idC -< txBit
 
-  go = snd $ main ((btns, rx), pure ())
+  go = snd $ main (rx, pure ())
 
 -- | The top entity
 topEntity ::

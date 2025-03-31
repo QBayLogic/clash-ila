@@ -13,6 +13,9 @@ import Protocols.PacketStream
 packetPreamble :: BitVector 32
 packetPreamble = 0xea88eacd
 
+data IlaIncomingPacket = IlaInvalidPacket | IlaResetTrigger
+  deriving (Generic, Enum, NFDataX, BitPack, Eq, Show)
+
 class IlaPacketType a where
   ilaPacketType :: a -> BitVector 16
 
@@ -106,3 +109,50 @@ finalizePacket = packetizerC headerTransfer headerTransfer
       { preamble = packetPreamble
       , kind = ilaPacketType packet
       }
+
+data DepacketizeState = DSIdle | DSPreamble (Index 3) | DSType
+  deriving (Generic, NFDataX)
+
+-- | Deserialize a raw byte stream into a packet, if possible
+-- Currently only supports the IlaResetTrigger, but will support more in the future
+deserializeToPacket ::
+  forall dom.
+  (HiddenClockResetEnable dom) =>
+  Circuit
+    (CSignal dom (Maybe (BitVector 8)))
+    (CSignal dom (Maybe IlaIncomingPacket))
+deserializeToPacket = Circuit exposeIn
+ where
+  exposeIn (byte, _) = out
+   where
+    transfer :: DepacketizeState -> Maybe (BitVector 8) -> (DepacketizeState, Maybe IlaIncomingPacket)
+    transfer state Nothing = (state, Nothing)
+    transfer DSIdle (Just 0xea) = (DSPreamble 0, Nothing)
+    transfer DSIdle (Just _) = (DSIdle, Nothing)
+    transfer (DSPreamble 0) (Just 0x88) = (DSPreamble 1, Nothing)
+    transfer (DSPreamble 1) (Just 0xea) = (DSPreamble 2, Nothing)
+    transfer (DSPreamble 2) (Just 0xcd) = (DSType, Nothing)
+    transfer (DSPreamble _) (Just _) = (DSIdle, Nothing)
+    transfer DSType (Just 0x02) = (DSIdle, Just IlaResetTrigger)
+    transfer DSType (Just _) = (DSIdle, Nothing)
+
+    packet :: Signal dom (Maybe IlaIncomingPacket)
+    packet = mealy transfer DSIdle byte
+
+    out = (pure (), packet)
+
+-- | Temporary function
+shouldReset ::
+  forall dom .
+  (HiddenClockResetEnable dom) =>
+  Circuit
+    (CSignal dom (Maybe IlaIncomingPacket))
+    (CSignal dom Bool)
+shouldReset = Circuit exposeIn
+ where
+  exposeIn (fwdIn, _) = out
+   where
+    reset (Just IlaResetTrigger) = True
+    reset _ = False
+
+    out = (pure (), reset <$> fwdIn)
