@@ -16,7 +16,7 @@ class IlaPacketType a where
 {- | Common ILA packet structure
 
 Shared in every packet;
-Size (in bytes): | 4 | 2 |
+Size (in bytes): | 4 | 1 |
 Type:            | P | T |
 -}
 data IlaFinalHeader = IlaFinalHeader

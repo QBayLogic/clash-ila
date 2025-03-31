@@ -164,7 +164,7 @@ pub fn find_preamble(data: &Vec<u8>) -> Option<usize> {
 
 /// Attempt to parse the input data as any form of packet, depending on the packet type ID
 pub fn get_packet(data: &Vec<u8>, config: &IlaConfig) -> Result<(Packets, usize), ParseErr> {
-    if data.len() < 6 {
+    if data.len() < 5 {
         return Err(ParseErr::NeedsMoreBytes);
     }
     match find_preamble(data) {
@@ -173,9 +173,9 @@ pub fn get_packet(data: &Vec<u8>, config: &IlaConfig) -> Result<(Packets, usize)
         None => return Err(ParseErr::NoPreamble),
     }
 
-    let input_data = &data[6..];
-    match (data[4] as u16) << 8 + data[5] as u16 {
-        0x0000 => {
+    let input_data = &data[5..];
+    match data[4] as u16 {
+        0x01 => {
             let (packet, leftover) = RawDataPacket::new(input_data, config)?;
             Ok((
                 Packets::Data(
@@ -271,7 +271,7 @@ where
 /// serialized to a valid packet which can be understood by the FPGA
 pub trait TxPacket {
     /// Retrieve the ID of this packet
-    fn id(&self) -> [u8; 2];
+    fn id(&self) -> u8;
 
     /// Serialize this packet into a stream of bytes
     /// Do __NOT__ include the ID or the preamble in the serialization logic
@@ -283,8 +283,8 @@ pub trait TxPacket {
 pub struct ResetTriggerPacket;
 
 impl TxPacket for ResetTriggerPacket {
-    fn id(&self) -> [u8; 2] {
-        [0x00, 0x02]
+    fn id(&self) -> u8 {
+        0x02
     }
 
     fn serialize(&self) -> Vec<u8> {
@@ -299,7 +299,7 @@ where
     T: TxPacket,
 {
     let preamble = vec![0xea, 0x88, 0xea, 0xcd];
-    let id = request.id().to_vec();
+    let id = vec![request.id()];
     let packet = request.serialize();
 
     let framed = [preamble, id, packet].concat();
