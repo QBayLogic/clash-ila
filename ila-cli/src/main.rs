@@ -142,11 +142,11 @@ impl ParseSubcommand for MonitorArgs {
 impl ParseSubcommand for TuiArgs {
     fn parse(self) {
         let port = find_specified_port(&self.port, self.baud);
-        let Ok(mut session) = tui::TuiSession::new() else { return };
-
         let configs = config::read_config(&self.config)
             .expect(&format!("File at {:?} contained errors", &self.config));
         let config = configs.ilas[0].clone();
+
+        let Ok(mut session) = tui::TuiSession::new(&config) else { return };
 
         let rx = packet::packet_loop(port.bytes(), config.clone());
 

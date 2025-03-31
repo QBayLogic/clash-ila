@@ -15,6 +15,9 @@ use tui::{
     *,
 };
 
+use crate::config::IlaConfig;
+use crate::vcd::write_to_vcd;
+
 use crate::packet::*;
 
 const KEYBIND_TEXT: &'static str = r#"  C-c   ---   Exit
@@ -86,14 +89,15 @@ enum TuiState {
     InPrompt(TextPromptState),
 }
 
-pub struct TuiSession {
+pub struct TuiSession<'a> {
     term: Terminal<CrosstermBackend<io::Stdout>>,
     state: TuiState,
+    config: &'a IlaConfig,
     captured: Vec<Vec<Signal>>,
 }
 
-impl TuiSession {
-    pub fn new() -> Result<TuiSession, io::Error> {
+impl<'a> TuiSession<'a> {
+    pub fn new(config: &'a IlaConfig) -> Result<TuiSession<'a>, io::Error> {
         enable_raw_mode()?;
 
         let mut stdout = io::stdout();
@@ -103,6 +107,7 @@ impl TuiSession {
         Ok(TuiSession {
             term: Terminal::new(backend)?,
             state: TuiState::Main,
+            config,
             captured: vec![],
         })
     }
@@ -185,6 +190,13 @@ impl TuiSession {
                     render_bounds: (0, u16::MAX),
                 })
             }
+            (TuiState::InPrompt(text_prompt), KeyCode::Enter, _) => {
+                if let Some(sample) = self.captured.get(0) {
+                    let _ = write_to_vcd(sample, &self.config, text_prompt.input.clone());
+                }
+
+                self.state = TuiState::Main;
+            }
             (TuiState::InPrompt(text_prompt), KeyCode::Char(c), _) => {
                 text_prompt.input.insert(text_prompt.cursor, c);
                 text_prompt.right();
@@ -246,7 +258,7 @@ impl TuiSession {
     }
 }
 
-impl Drop for TuiSession {
+impl Drop for TuiSession<'_> {
     fn drop(&mut self) {
         let _ = execute!(self.term.backend_mut(), LeaveAlternateScreen);
         let _ = disable_raw_mode();
