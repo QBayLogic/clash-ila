@@ -1,5 +1,5 @@
 use std::{
-    io::{Bytes, Read},
+    io::{Bytes, Read, Write},
     sync::mpsc::{self, Receiver, Sender},
 };
 
@@ -108,14 +108,20 @@ impl RawDataPacket {
     fn into_signals(&self, config: &IlaConfig) -> Option<Vec<Signal>> {
         // Not quite sure if this is considered ugly, it's a nice oneliner, but god is it abusing
         // syntax
-        let true = self.hash == config.hash else { return None };
+        let true = self.hash == config.hash else {
+            return None;
+        };
 
         let bitvecs: Vec<BitVec<u8, Msb0>> = self
             .buffer
             .chunks(config.transaction_byte_count())
-            .map(|chunk| chunk.view_bits::<Msb0>().iter()
-                .skip(chunk.len() * 8 - config.transaction_bit_count())
-                .collect())
+            .map(|chunk| {
+                chunk
+                    .view_bits::<Msb0>()
+                    .iter()
+                    .skip(chunk.len() * 8 - config.transaction_bit_count())
+                    .collect()
+            })
             .collect();
 
         let mut signals: Vec<Signal> = config
@@ -265,4 +271,44 @@ where
     });
 
     rx
+}
+
+/// A trait for any PC -> FPGA communication, any packet implementing this trait is expected to be
+/// serialized to a valid packet which can be understood by the FPGA
+pub trait TxPacket {
+    /// Retrieve the ID of this packet
+    fn id(&self) -> [u8; 2];
+
+    /// Serialize this packet into a stream of bytes
+    /// Do __NOT__ include the ID or the preamble in the serialization logic
+    fn serialize(&self) -> Vec<u8>;
+}
+
+/// A packet going from the PC -> FPGA instructing it to reset the trigger (and thus capture new
+/// samples)
+pub struct ResetTriggerPacket;
+
+impl TxPacket for ResetTriggerPacket {
+    fn id(&self) -> [u8; 2] {
+        [0x00, 0x02]
+    }
+
+    fn serialize(&self) -> Vec<u8> {
+        vec![]
+    }
+}
+
+/// Send out a packet to the FPGA
+pub fn send_packet<T, P>(tx_port: &mut P, request: &T) -> Result<(), std::io::Error>
+where
+    P: Write,
+    T: TxPacket,
+{
+    let preamble = vec![0xea, 0x88, 0xea, 0xcd];
+    let id = request.id().to_vec();
+    let packet = request.serialize();
+
+    let framed = [preamble, id, packet].concat();
+
+    tx_port.write_all(&framed)
 }
