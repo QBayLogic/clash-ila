@@ -13,8 +13,8 @@ import Protocols.PacketStream
 packetPreamble :: BitVector 32
 packetPreamble = 0xea88eacd
 
-data IlaIncomingPacket = IlaInvalidPacket | IlaResetTrigger
-  deriving (Generic, Enum, NFDataX, BitPack, Eq, Show)
+data IlaIncomingPacket = IlaResetTrigger | IlaChangeTriggerPoint (BitVector 32)
+  deriving (Generic, NFDataX, BitPack, Eq, Show)
 
 class IlaPacketType a where
   ilaPacketType :: a -> BitVector 16
@@ -110,11 +110,16 @@ finalizePacket = packetizerC headerTransfer headerTransfer
       , kind = ilaPacketType packet
       }
 
-data DepacketizeState = DSIdle | DSPreamble (Index 3) | DSType
+data DepacketizeState
+  = DSIdle
+  | DSPreamble (Index 3)
+  | DSType
+  | DSData (IlaIncomingPacket, Index 64)
   deriving (Generic, NFDataX)
 
--- | Deserialize a raw byte stream into a packet, if possible
--- Currently only supports the IlaResetTrigger, but will support more in the future
+{- | Deserialize a raw byte stream into a packet, if possible
+Currently only supports the IlaResetTrigger, but will support more in the future
+-}
 deserializeToPacket ::
   forall dom.
   (HiddenClockResetEnable dom) =>
@@ -125,7 +130,8 @@ deserializeToPacket = Circuit exposeIn
  where
   exposeIn (byte, _) = out
    where
-    transfer :: DepacketizeState -> Maybe (BitVector 8) -> (DepacketizeState, Maybe IlaIncomingPacket)
+    transfer ::
+      DepacketizeState -> Maybe (BitVector 8) -> (DepacketizeState, Maybe IlaIncomingPacket)
     transfer state Nothing = (state, Nothing)
     transfer DSIdle (Just 0xea) = (DSPreamble 0, Nothing)
     transfer DSIdle (Just _) = (DSIdle, Nothing)
@@ -133,7 +139,16 @@ deserializeToPacket = Circuit exposeIn
     transfer (DSPreamble 1) (Just 0xea) = (DSPreamble 2, Nothing)
     transfer (DSPreamble 2) (Just 0xcd) = (DSType, Nothing)
     transfer (DSPreamble _) (Just _) = (DSIdle, Nothing)
+    -- Parse IlaResetTrigger
     transfer DSType (Just 0x02) = (DSIdle, Just IlaResetTrigger)
+    -- Parse IlaChangeTriggerPoint
+    transfer DSType (Just 0x03) = (DSData (IlaChangeTriggerPoint 0, 3), Nothing)
+    transfer (DSData ((IlaChangeTriggerPoint trigPoint), 0)) (Just by) =
+      (DSIdle, Just $ IlaChangeTriggerPoint (shiftL trigPoint 8 .|. resize by))
+    transfer (DSData ((IlaChangeTriggerPoint trigPoint), i)) (Just by) =
+      (DSData (IlaChangeTriggerPoint (shiftL trigPoint 8 .|. resize by), i - 1), Nothing)
+    -- Catch-all cases
+    transfer (DSData _) (Just _) = (DSIdle, Nothing)
     transfer DSType (Just _) = (DSIdle, Nothing)
 
     packet :: Signal dom (Maybe IlaIncomingPacket)
@@ -143,7 +158,7 @@ deserializeToPacket = Circuit exposeIn
 
 -- | Temporary function
 shouldReset ::
-  forall dom .
+  forall dom.
   (HiddenClockResetEnable dom) =>
   Circuit
     (CSignal dom (Maybe IlaIncomingPacket))
