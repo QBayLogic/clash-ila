@@ -94,7 +94,7 @@ pub struct TuiSession<'a> {
     term: Terminal<CrosstermBackend<io::Stdout>>,
     state: TuiState,
     config: &'a IlaConfig,
-    log: String,
+    log: Vec<String>,
     captured: Vec<Vec<Signal>>,
 }
 
@@ -110,7 +110,7 @@ impl<'a> TuiSession<'a> {
             term: Terminal::new(backend)?,
             state: TuiState::Main,
             config,
-            log: String::new(),
+            log: Vec::with_capacity(64),
             captured: vec![],
         })
     }
@@ -123,14 +123,6 @@ impl<'a> TuiSession<'a> {
                 .borders(Borders::ALL);
             f.render_widget(title_block, size);
 
-            let help_menu = Paragraph::new(KEYBIND_TEXT)
-                .block(Block::default().title("Keybinds").borders(Borders::ALL));
-            let info_menu = Paragraph::new(format!(
-                "Captured {} signals\n{}",
-                self.captured.len(),
-                self.log
-            ))
-            .block(Block::default().title("Info").borders(Borders::ALL));
             let main_layout = Layout::default()
                 .direction(layout::Direction::Vertical)
                 .constraints([
@@ -141,8 +133,43 @@ impl<'a> TuiSession<'a> {
                     vertical: 1,
                     horizontal: 1,
                 }));
+            let info_layout = Layout::default()
+                .direction(layout::Direction::Vertical)
+                .margin(1)
+                .constraints([Constraint::Min(1), Constraint::Min(1)])
+                .split(main_layout[1]);
+
+            // Ensure the lines fit within the Paragraph's range
+            // If a string spans multiple lines / overflows, too bad*!*
+            self.log = self
+                .log
+                .iter()
+                .cloned() // Ugly clone, but we can't avoid it due to
+                // the &mut of self
+                .skip(
+                    self.log
+                        .len()
+                        .saturating_sub(info_layout[1].height as usize),
+                )
+                .collect();
+
+            let help_menu = Paragraph::new(KEYBIND_TEXT)
+                .block(Block::default().title("Keybinds").borders(Borders::ALL));
+            let info_menu_block = Block::default().title("Info").borders(Borders::ALL);
+            let info_info_section =
+                Paragraph::new(format!("Received {} captures", self.captured.len()));
+            let info_log_section = Paragraph::new(
+                self.log
+                    .iter()
+                    .map(|s| format!("{s}\n"))
+                    .collect::<String>(),
+            )
+            .block(Block::default().borders(Borders::TOP));
+
             f.render_widget(help_menu, main_layout[0]);
-            f.render_widget(info_menu, main_layout[1]);
+            f.render_widget(info_menu_block, main_layout[1]);
+            f.render_widget(info_info_section, info_layout[0]);
+            f.render_widget(info_log_section, info_layout[1]);
 
             if let TuiState::InPrompt(text_prompt) = &mut self.state {
                 let width = size.width.saturating_sub(10);
@@ -178,17 +205,13 @@ impl<'a> TuiSession<'a> {
 
     /// Handle the keypresses. Returns wether or not it should break out of the main loop or not
     fn on_key_event<T: Write>(&mut self, event: KeyEvent, tx_port: &mut T) -> bool {
-        if event.code == KeyCode::Esc {
-            self.state = TuiState::Main
-        }
-
         match (&mut self.state, event.code, event.modifiers) {
             (TuiState::Main, KeyCode::Char('c'), KeyModifiers::CONTROL) => {
                 return true;
             }
             (TuiState::Main, KeyCode::Char('r'), _) => {
                 if let Err(err) = send_packet(tx_port, &ResetTriggerPacket) {
-                    self.log = format!("{}\nError: {}", self.log, err);
+                    self.log.push(format!("Error: {err}"));
                 }
             }
             (TuiState::Main, KeyCode::Char('v'), _) => {
@@ -202,9 +225,20 @@ impl<'a> TuiSession<'a> {
                     render_bounds: (0, u16::MAX),
                 })
             }
+            (TuiState::InPrompt(_), KeyCode::Esc, _) => {
+                self.log.push(format!("Cancelled save"));
+                self.state = TuiState::Main;
+            }
             (TuiState::InPrompt(text_prompt), KeyCode::Enter, _) => {
                 if let Some(sample) = self.captured.get(0) {
-                    let _ = write_to_vcd(sample, &self.config, text_prompt.input.clone());
+                    if let Err(err) = write_to_vcd(sample, &self.config, text_prompt.input.clone())
+                    {
+                        self.log.push(format!("Error when saving VCD: {}", err));
+                    } else {
+                        self.log.push(format!("Saved succesfully!"));
+                    }
+                } else {
+                    self.log.push(format!("Nothing to save"));
                 }
 
                 self.state = TuiState::Main;
