@@ -74,6 +74,7 @@ topLogicUart baud btns rx = go
       ila
         ( ilaConfig
             d100
+            20
             "name"
             ((counter0, "Base") .*. (counter1, "+20") .*. (counter2, "+40") .*. HNil)
             (bundle (counter0, counter1, counter2))
