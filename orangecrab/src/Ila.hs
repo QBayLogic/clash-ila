@@ -7,9 +7,9 @@
 module Ila where
 
 import Clash.Prelude
+import ConfigGen
 import Packet
 import RingBuffer
-import ConfigGen
 
 import Data.Data
 
@@ -83,13 +83,15 @@ triggerController predicate i core = Circuit exposeIn
  where
   exposeIn (triggerRst, backpressure) = out
    where
-    oldTriggered :: Signal dom Bool
-    oldTriggered = register False triggered
+    sampledPostTrigger :: Signal dom (Index size)
+    sampledPostTrigger = register 0 $ mux triggered (satAdd SatBound 1 <$> sampledPostTrigger) 0
+
     triggered :: Signal dom Bool
-    triggered = mux triggerRst (pure False) oldTriggered .||. (predicate <$> config.tracing)
+    triggered =
+      register False $ mux triggerRst (pure False) triggered .||. (predicate <$> config.tracing)
 
     shouldSample :: Signal dom Bool
-    shouldSample = not <$> triggered
+    shouldSample = not <$> triggered .||. sampledPostTrigger .<. pure config.triggerPoint
 
     injectId oldMeta = (config.hash, oldMeta)
 

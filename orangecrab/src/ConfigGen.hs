@@ -72,6 +72,8 @@ ilaConfig ::
   ) =>
   -- | How many samples should it capture of each signal?
   SNat n ->
+  -- | How many samples after triggering should it still capture?
+  Index n ->
   -- | Merely an identifier, recommended to be the name of the toplevel design, but it can be any name you fancy
   String ->
   -- | A list of signals and labels (Strings) tupled together to sample
@@ -80,10 +82,11 @@ ilaConfig ::
   Signal dom a ->
   -- | The ILA configuration itself
   IlaConfig n (Signal dom a)
-ilaConfig size toplevelName namedSignals bundledSignals =
+ilaConfig size triggerPoint toplevelName namedSignals bundledSignals =
   IlaConfig
     { hash = 0
     , size = size
+    , triggerPoint = triggerPoint
     , tracing = bundledSignals
     }
 
@@ -93,6 +96,8 @@ data IlaConfig n a = IlaConfig
   -- ^ A hash to verify which ILA the system is communicating with
   , size :: SNat n
   -- ^ Size of the buffers, aka; how many samples should it capture
+  , triggerPoint :: Index n
+  -- ^ How many samples *after* triggering it should sample
   , tracing :: a
   -- ^ The signal to trace
   }
