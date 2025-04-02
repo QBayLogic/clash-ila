@@ -103,16 +103,64 @@ triggerController predicate i core = Circuit exposeIn
 
     out = ((pure (), pure ()), snd $ packet (triggered, backpressure))
 
+-- | A signal fanout, simply duplicates a signal n times
 fanoutCSig ::
   forall dom n a.
   (KnownNat n) =>
+  -- | How many times to 'duplicate' the signal
   SNat n ->
+  -- | The circuit, where the input will be duplicated n times and returned as the output
   Circuit
     (CSignal dom a)
     (Vec n (CSignal dom a))
 fanoutCSig _ = Circuit go
  where
   go (fwd, _) = (pure (), repeat fwd)
+
+-- | Checks if an incoming packet should re-arm the the trigger (reset the trigger)
+rearmTrigger ::
+  forall dom.
+  (HiddenClockResetEnable dom) =>
+  -- | The circuit, input is the incoming packet (if there is one) and the output returns a bool
+  -- indicating wether or not it should re-arm the trigger
+  Circuit
+    (CSignal dom (Maybe IlaIncomingPacket))
+    (CSignal dom Bool)
+rearmTrigger = Circuit exposeIn
+ where
+  exposeIn (fwdIn, _) = out
+   where
+    rearm (Just IlaResetTrigger) = True
+    rearm _ = False
+
+    out = (pure (), rearm <$> fwdIn)
+
+{- | Checks if an incoming packet should change the trigger point of the ILA, and if it should
+what index should it reset at?
+
+NOTE: due to the `IlaChangeTriggerPoint` using a bv32, values bigger than the buffer `size` itself
+will be truncated on a bit level. That may result in some unexpected values, the simple solution
+is to not send out values bigger than `size`
+-}
+changeTriggerPoint ::
+  forall dom size.
+  ( HiddenClockResetEnable dom
+  , KnownNat size
+  , 1 <= size
+  ) =>
+  -- The circuit, input is an incoming packet (if there is one) and the output is the new trigger
+  -- point, if the packet is a `IlaChangeTriggerPoint`, otherwise returns `Nothing`
+  Circuit
+    (CSignal dom (Maybe IlaIncomingPacket))
+    (CSignal dom (Maybe (Index size)))
+changeTriggerPoint = Circuit exposeIn
+ where
+  exposeIn (fwdIn, _) = out
+   where
+    newTrigger (Just (IlaChangeTriggerPoint new)) = Just $ unpack . resize $ pack new
+    newTrigger _ = Nothing
+
+    out = (pure (), newTrigger <$> fwdIn)
 
 {- | The ILA component itself
 
@@ -134,9 +182,22 @@ ila ::
   IlaConfig size (Signal dom a) ->
   -- | Trigger predicate
   (a -> Bool) ->
-  -- | Circuit outputting the content of the buffer whenever the predicate has been triggered
-  -- The input signal is to clear the trigger
+  -- | The ILA circuit, the input needs to be connected to some sort of byte input and the output
+  -- is a PacketStream containing bytes to be routed to the PC.
+  --
+  -- TODO: example? Not added one yet due to possible change in API
   Circuit
-    (CSignal dom Bool)
-    (PacketStream dom (BitSize a `DivRU` 8) IlaFinalHeader)
-ila size predicate sig = finalizePacket <| (triggerController predicate sig $ ilaCore size (pure True))
+    (CSignal dom (Maybe (BitVector 8)))
+    (PacketStream dom (BitSize a `DivRU` 8) IlaFinalizedPacket)
+ila config predicate = circuit $ \rxByte -> do
+  [dec0, dec1] <- fanoutCSig d2 <| deserializeToPacket -< rxByte
+
+  triggerReset <- rearmTrigger -< dec0
+  hasNewTrigger <- changeTriggerPoint -< dec1
+
+  controller <-
+    (triggerController config predicate $ ilaCore config.size (pure True))
+      -< (hasNewTrigger, triggerReset)
+  packets <- finalizePacket -< controller
+
+  idC -< packets
