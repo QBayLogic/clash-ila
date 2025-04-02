@@ -1,6 +1,7 @@
 use std::{
     io::{Bytes, Read, Write},
     sync::mpsc::{self, Receiver, Sender},
+    time::{Duration, Instant},
 };
 
 use bitvec::prelude::*;
@@ -104,8 +105,17 @@ pub struct Signal {
     pub samples: Vec<BitVec<u8, Msb0>>,
 }
 
+/// A packet of several signals which all got sent at once
+///
+/// This should be considered as 'all signals being monitored by the ILA in one timeframe'
+#[derive(Debug, Clone)]
+pub struct SignalCluster {
+    pub cluster: Vec<Signal>,
+    pub timestamp: Duration,
+}
+
 impl RawDataPacket {
-    fn into_signals(&self, config: &IlaConfig) -> Option<Vec<Signal>> {
+    fn into_signals(&self, config: &IlaConfig, monitor_start: Instant) -> Option<SignalCluster> {
         // Not quite sure if this is considered ugly, it's a nice oneliner, but god is it abusing
         // syntax
         let true = self.hash == config.hash else {
@@ -146,14 +156,17 @@ impl RawDataPacket {
             }
         }
 
-        Some(signals)
+        Some(SignalCluster {
+            cluster: signals,
+            timestamp: monitor_start.elapsed(),
+        })
     }
 }
 
 /// All possible parsable packets
 #[derive(Debug)]
 pub enum Packets {
-    Data(Vec<Signal>),
+    Data(SignalCluster),
 }
 
 /// Find the packet preamble in a stream bytes and return its position
@@ -163,7 +176,7 @@ pub fn find_preamble(data: &Vec<u8>) -> Option<usize> {
 }
 
 /// Attempt to parse the input data as any form of packet, depending on the packet type ID
-pub fn get_packet(data: &Vec<u8>, config: &IlaConfig) -> Result<(Packets, usize), ParseErr> {
+pub fn get_packet(data: &Vec<u8>, config: &IlaConfig, monitor_start: Instant) -> Result<(Packets, usize), ParseErr> {
     if data.len() < 5 {
         return Err(ParseErr::NeedsMoreBytes);
     }
@@ -180,7 +193,7 @@ pub fn get_packet(data: &Vec<u8>, config: &IlaConfig) -> Result<(Packets, usize)
             Ok((
                 Packets::Data(
                     packet
-                        .into_signals(config)
+                        .into_signals(config, monitor_start)
                         .ok_or(ParseErr::WrongConfiguration)?,
                 ),
                 leftover,
@@ -193,12 +206,12 @@ pub fn get_packet(data: &Vec<u8>, config: &IlaConfig) -> Result<(Packets, usize)
 /// Given a buffer filled with bytes, attempts to construct a valid packet and send it over a
 /// `Sender` channel. Clears the buffer up until the pre-amble if no valid packet could be
 /// constructed.
-fn try_complete_packet(tx: &Sender<Packets>, buffer: &mut Vec<u8>, config: &IlaConfig) {
+fn try_complete_packet(tx: &Sender<Packets>, buffer: &mut Vec<u8>, config: &IlaConfig, monitor_start: Instant) {
     if buffer.is_empty() {
         return;
     }
 
-    match get_packet(&buffer, config) {
+    match get_packet(&buffer, &config, monitor_start) {
         Ok((packet, leftover)) => {
             match tx.send(packet) {
                 Ok(_) => (),
@@ -260,10 +273,11 @@ where
 
     std::thread::spawn(move || {
         let mut buffer: Vec<u8> = vec![];
+        let monitor_start = Instant::now();
 
         for byte in bytesteam {
             let Ok(byte) = byte else {
-                try_complete_packet(&tx, &mut buffer, &config);
+                try_complete_packet(&tx, &mut buffer, &config, monitor_start);
                 continue;
             };
             buffer.push(byte);
@@ -310,7 +324,6 @@ impl TxPacket for ChangeTriggerPoint {
         vec![0x03, 0x69, 0x88, 0x01]
     }
 }
-
 
 /// Send out a packet to the FPGA
 pub fn send_packet<T, P>(tx_port: &mut P, request: &T) -> Result<(), std::io::Error>

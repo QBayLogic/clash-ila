@@ -121,7 +121,7 @@ pub struct TuiSession<'a> {
     state: TuiState,
     config: &'a IlaConfig,
     log: Vec<String>,
-    captured: Vec<Vec<Signal>>,
+    captured: Vec<SignalCluster>,
 }
 
 impl<'a> TuiSession<'a> {

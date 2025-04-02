@@ -1,3 +1,4 @@
+use std::time::Duration;
 use std::{io::Result as IoResult, path::Path};
 use vcd::{IdCode, SimulationCommand, Value as VcdValue};
 
@@ -45,11 +46,11 @@ impl VcdSignal {
 
 /// Write the measured data to a VCD file
 ///
-/// * `signals` - Each signal measured, encoded as a `DataPacket`s
+/// * `signals` - The signal cluster to write to a VCD file
 /// * `identifier` - The collective name of the signals
 /// * `path` - Path to the write to write too, will overwrite any file already in place
 pub fn write_to_vcd<P: AsRef<Path>>(
-    signals: &Vec<Signal>,
+    signals: &SignalCluster,
     config: &IlaConfig,
     path: P,
 ) -> IoResult<()> {
@@ -65,6 +66,7 @@ pub fn write_to_vcd<P: AsRef<Path>>(
     vcd_writer.timescale(1, vcd::TimescaleUnit::US)?;
     vcd_writer.add_module(&config.toplevel)?;
     let wires: Vec<VcdSignal> = signals
+        .cluster
         .iter()
         .filter_map(|signal| VcdSignal::from_vcd(&mut vcd_writer, signal).ok())
         .collect();
@@ -80,6 +82,7 @@ pub fn write_to_vcd<P: AsRef<Path>>(
 
     // Actual change value part
     let max_sample_count = signals
+        .cluster
         .iter()
         .map(|b| b.samples.len())
         .max()
