@@ -157,37 +157,3 @@ deserializeToPacket = Circuit exposeIn
 
     out = (pure (), packet)
 
--- | Temporary function
-shouldReset ::
-  forall dom.
-  (HiddenClockResetEnable dom) =>
-  Circuit
-    (CSignal dom (Maybe IlaIncomingPacket))
-    (CSignal dom Bool)
-shouldReset = Circuit exposeIn
- where
-  exposeIn (fwdIn, _) = out
-   where
-    reset (Just IlaResetTrigger) = True
-    reset _ = False
-
-    out = (pure (), reset <$> fwdIn)
-
--- | Temporary function
-shouldChangeTrigger ::
-  forall dom size.
-  ( HiddenClockResetEnable dom
-  , KnownNat size
-  , 1 <= size
-  ) =>
-  Circuit
-    (CSignal dom (Maybe IlaIncomingPacket))
-    (CSignal dom (Maybe (Index size)))
-shouldChangeTrigger = Circuit exposeIn
- where
-  exposeIn (fwdIn, _) = out
-   where
-    newTrigger (Just (IlaChangeTriggerPoint new)) = Just $ unpack . resize $ pack new
-    newTrigger _ = Nothing
-
-    out = (pure (), newTrigger <$> fwdIn)
