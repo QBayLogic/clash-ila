@@ -1,4 +1,4 @@
-use std::io::{BufWriter, Write};
+use std::io::Write;
 use std::sync::mpsc::Receiver;
 use std::{io, time::Duration};
 
@@ -21,6 +21,7 @@ use crate::vcd::write_to_vcd;
 
 use crate::packet::*;
 
+/// The keybind text displayed in the TUI
 const KEYBIND_TEXT: &'static str = r#"  C-c   ---   Exit
   t     ---   Change trigger point
   c     ---   Change trigger logic
@@ -29,24 +30,39 @@ const KEYBIND_TEXT: &'static str = r#"  C-c   ---   Exit
   v     ---   Write signals to VCD dump
 "#;
 
+/// The reason to prompt the user with, mostly important to decide what to do next after a user has
+/// inputted data to the prompt
 #[derive(Debug, PartialEq, Eq, Clone)]
 enum PromptReason {
+    /// Prompt for the filename to save the VCD too
     SaveVcd,
+    /// Prompt to change the trigger
     ChangeTrigger,
 }
 
+/// The state for the TextPrompt widget
 #[derive(Debug, PartialEq, Eq, Clone)]
 struct TextPromptState {
+    /// The title of the widget
     title: String,
+    /// The input field, gets appended to as the user types
     input: String,
+    /// The location of the cursor within the buffer, note that this is NOT the location on screen!
     cursor: usize,
+    /// The calculated offset the curser has in relation to the on screen text
     cursor_offset: usize,
+    /// A number indicating how many characters should be skipped before displaying visible text on
+    /// screen
     visible: usize,
+    /// The minimum and maximum bounds that text can be displayed on. These simply mean available
+    /// space, not actual occupied space by text
     render_bounds: (u16, u16),
+    /// The reason for this prompt to be prompted
     reason: PromptReason,
 }
 
 impl TextPromptState {
+    /// Create a new TextPromptState
     fn new<S0, S1>(title: S0, default: Option<S1>, reason: PromptReason) -> TextPromptState
     where
         S0: Into<String>,
@@ -65,6 +81,7 @@ impl TextPromptState {
         }
     }
 
+    /// Calculate from what point the text should be visible
     fn calculate_visible(&mut self, area: Rect) {
         self.visible = self
             .input
@@ -73,6 +90,7 @@ impl TextPromptState {
             .saturating_sub(self.cursor_offset);
     }
 
+    /// Move the cursor one step to the left
     fn left(&mut self) {
         self.cursor = self.cursor.saturating_sub(1);
         if self.cursor != 0 && self.get_cursor_x() == self.render_bounds.0 {
@@ -80,6 +98,7 @@ impl TextPromptState {
         }
     }
 
+    /// Move the cursor one step to the right
     fn right(&mut self) {
         self.cursor = self.input.len().min(self.cursor + 1);
         if self.cursor != self.input.len() && self.get_cursor_x() == self.render_bounds.1 {
@@ -87,6 +106,7 @@ impl TextPromptState {
         }
     }
 
+    /// Calculate where the cursor should be placed in the TUI
     fn get_cursor_x(&self) -> u16 {
         (self.render_bounds.0 + self.cursor.saturating_sub(self.visible) as u16)
             .min(self.render_bounds.1)
@@ -110,21 +130,38 @@ impl StatefulWidget for TextPrompt {
     }
 }
 
+/// The state of the TUI
 #[derive(Debug, PartialEq, Eq, Clone)]
 enum TuiState {
+    /// The TUI is in an idle state
     Main,
+    /// The TUI is currently prompting the user for input
     InPrompt(TextPromptState),
 }
 
+/// A TUI session
+///
+/// This struct owns the TUI and once it goes out of scope, so will the TUI
+/// It handles everything from rendering to interacting with the FPGA, and that's why it also needs
+/// the ILA configuration.
 pub struct TuiSession<'a> {
+    /// The terminal backend to render the TUI on
     term: Terminal<CrosstermBackend<io::Stdout>>,
+    /// In what state is the TUI currently at?
     state: TuiState,
+    /// The ILA configuration, specifying certain aspects of the ILA
     config: &'a IlaConfig,
+    /// A log for interactions to log their activity too, regularly gets truncated to fit the
+    /// screen during rendering
     log: Vec<String>,
+    /// A list of signal clusters captured by the ILA
     captured: Vec<SignalCluster>,
 }
 
 impl<'a> TuiSession<'a> {
+    /// Create a new TUI session associated with a certain IlaConfig
+    ///
+    /// * `config` - The ILA configuration the TUI should use to properly communicate with the ILA
     pub fn new(config: &'a IlaConfig) -> Result<TuiSession<'a>, io::Error> {
         enable_raw_mode()?;
 
@@ -141,6 +178,7 @@ impl<'a> TuiSession<'a> {
         })
     }
 
+    /// Render the TUI
     pub fn render(&mut self) {
         let _ = self.term.draw(|f| {
             let size = f.size();
@@ -229,8 +267,6 @@ impl<'a> TuiSession<'a> {
         });
     }
 
-    fn on_prompt_completed<T: Write>(&mut self, prompt: TextPromptState, tx_port: &mut T) {}
-
     /// Handle the keypresses. Returns wether or not it should break out of the main loop or not
     fn on_key_event<T: Write>(&mut self, event: KeyEvent, tx_port: &mut T) -> bool {
         match (&mut self.state, event.code, event.modifiers) {
@@ -261,6 +297,10 @@ impl<'a> TuiSession<'a> {
                 self.state = TuiState::Main;
             }
             (TuiState::InPrompt(prompt), KeyCode::Enter, _) => {
+                // Handle the case of whenever a prompt gets completed
+                // I want to move this to a seperate function, however due to borrow limits I can't
+                // and that's kind of very annoying
+                
                 match prompt.reason {
                     PromptReason::SaveVcd => {
                         if let Some(sample) = self.captured.last() {
@@ -331,6 +371,9 @@ impl<'a> TuiSession<'a> {
         false
     }
 
+    /// The main TUI loop
+    ///
+    /// Handles everything from rendering to the input of the TUI interface
     pub fn main_loop<T: Write>(&mut self, incoming_signals: Receiver<Packets>, mut tx_port: T) {
         self.render();
 
@@ -362,6 +405,8 @@ impl<'a> TuiSession<'a> {
 }
 
 impl Drop for TuiSession<'_> {
+    // Make sure that when the TuiSession goes out of scope, we exit the alternative screen, as to
+    // not break the user's terminal session (hopefully)
     fn drop(&mut self) {
         let _ = execute!(self.term.backend_mut(), LeaveAlternateScreen);
         let _ = disable_raw_mode();
