@@ -12,6 +12,7 @@ import Packet
 import RingBuffer
 
 import Data.Data
+import Data.Maybe as DM
 
 import Protocols
 import Protocols.PacketStream
@@ -81,24 +82,37 @@ triggerController ::
     (PacketStream dom (BitSize a `DivRU` 8) IlaDataHeader)
 triggerController predicate i core = Circuit exposeIn
  where
-  exposeIn (triggerRst, backpressure) = out
+  exposeIn ((newTrigPoint, triggerRst), backpressure) = out
    where
-    sampledPostTrigger :: Signal dom (Index size)
-    sampledPostTrigger = register 0 $ mux triggered (satAdd SatBound 1 <$> sampledPostTrigger) 0
+    triggerPoint = register config.triggerPoint $ liftA2 DM.fromMaybe triggerPoint newTrigPoint
+
+    postTriggerSampled :: Signal dom (Index size)
+    postTriggerSampled = register 0 $ mux triggered (satAdd SatBound 1 <$> postTriggerSampled) 0
 
     triggered :: Signal dom Bool
     triggered =
       register False $ mux triggerRst (pure False) triggered .||. (predicate <$> config.tracing)
 
     shouldSample :: Signal dom Bool
-    shouldSample = not <$> triggered .||. sampledPostTrigger .<. pure config.triggerPoint
+    shouldSample = not <$> triggered .||. postTriggerSampled .<. triggerPoint
 
     injectId oldMeta = (config.hash, oldMeta)
 
     buffer = core config.tracing shouldSample triggerRst
     Circuit packet = dataPacket (Proxy :: Proxy a) <| mapMeta injectId <| ringBufferReaderPS buffer
 
-    out = (pure (), snd $ packet (triggered, backpressure))
+    out = ((pure (), pure ()), snd $ packet (triggered, backpressure))
+
+fanoutCSig ::
+  forall dom n a.
+  (KnownNat n) =>
+  SNat n ->
+  Circuit
+    (CSignal dom a)
+    (Vec n (CSignal dom a))
+fanoutCSig _ = Circuit go
+ where
+  go (fwd, _) = (pure (), repeat fwd)
 
 {- | The ILA component itself
 

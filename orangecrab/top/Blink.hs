@@ -69,7 +69,7 @@ topLogicUart baud btns rx = go
 
   Circuit main = circuit $ \(rxBit) -> do
     (rxByte, txBit) <- uartDf baud -< (txByte, rxBit)
-    triggerReset <- shouldReset <| deserializeToPacket -< rxByte
+    -- triggerReset <- shouldReset <| deserializeToPacket -< rxByte
     packet <-
       ila
         ( ilaConfig
@@ -80,7 +80,7 @@ topLogicUart baud btns rx = go
             (bundle (counter0, counter1, counter2))
         )
         (\(a, _, _) -> a == 300)
-        -< triggerReset
+        -< rxByte
     txByte <- ps2df -< packet
     idC -< txBit
 
