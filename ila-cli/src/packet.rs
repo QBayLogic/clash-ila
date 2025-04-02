@@ -321,7 +321,7 @@ impl TxPacket for ChangeTriggerPoint {
     }
 
     fn serialize(&self) -> Vec<u8> {
-        vec![0x03, 0x69, 0x88, 0x01]
+        self.0.to_be_bytes().to_vec()
     }
 }
 
