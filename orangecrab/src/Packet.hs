@@ -5,6 +5,7 @@
 module Packet where
 
 import Clash.Prelude
+import ConfigGen
 import Data.Maybe qualified as DM
 import Data.Proxy
 import Protocols
@@ -168,3 +169,22 @@ shouldReset = Circuit exposeIn
     reset _ = False
 
     out = (pure (), reset <$> fwdIn)
+
+-- | Temporary function
+shouldChangeTrigger ::
+  forall dom size.
+  ( HiddenClockResetEnable dom
+  , KnownNat size
+  , 1 <= size
+  ) =>
+  Circuit
+    (CSignal dom (Maybe IlaIncomingPacket))
+    (CSignal dom (Maybe (Index size)))
+shouldChangeTrigger = Circuit exposeIn
+ where
+  exposeIn (fwdIn, _) = out
+   where
+    newTrigger (Just (IlaChangeTriggerPoint new)) = Just $ unpack . resize $ pack new
+    newTrigger _ = Nothing
+
+    out = (pure (), newTrigger <$> fwdIn)
