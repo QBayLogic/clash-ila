@@ -22,11 +22,18 @@ use crate::vcd::write_to_vcd;
 use crate::packet::*;
 
 const KEYBIND_TEXT: &'static str = r#"  C-c   ---   Exit
+  t     ---   Change trigger point
   c     ---   Change trigger logic
   r     ---   Reset trigger
   s     ---   Request sample to be sent again
   v     ---   Write signals to VCD dump
 "#;
+
+#[derive(Debug, PartialEq, Eq, Clone)]
+enum PromptReason {
+    SaveVcd,
+    ChangeTrigger,
+}
 
 #[derive(Debug, PartialEq, Eq, Clone)]
 struct TextPromptState {
@@ -36,9 +43,28 @@ struct TextPromptState {
     cursor_offset: usize,
     visible: usize,
     render_bounds: (u16, u16),
+    reason: PromptReason,
 }
 
 impl TextPromptState {
+    fn new<S0, S1>(title: S0, default: Option<S1>, reason: PromptReason) -> TextPromptState
+    where
+        S0: Into<String>,
+        S1: Into<String>,
+    {
+        let def = default.map(|s| s.into()).unwrap_or(String::new());
+        let len = def.len();
+        TextPromptState {
+            title: title.into(),
+            input: def,
+            cursor: len,
+            cursor_offset: 0,
+            visible: 0,
+            render_bounds: (u16::MIN, u16::MAX),
+            reason,
+        }
+    }
+
     fn calculate_visible(&mut self, area: Rect) {
         self.visible = self
             .input
@@ -203,6 +229,8 @@ impl<'a> TuiSession<'a> {
         });
     }
 
+    fn on_prompt_completed<T: Write>(&mut self, prompt: TextPromptState, tx_port: &mut T) {}
+
     /// Handle the keypresses. Returns wether or not it should break out of the main loop or not
     fn on_key_event<T: Write>(&mut self, event: KeyEvent, tx_port: &mut T) -> bool {
         match (&mut self.state, event.code, event.modifiers) {
@@ -214,31 +242,45 @@ impl<'a> TuiSession<'a> {
                     self.log.push(format!("Error: {err}"));
                 }
             }
+            (TuiState::Main, KeyCode::Char('t'), _) => {
+                self.state = TuiState::InPrompt(TextPromptState::new(
+                    "Change trigger point (samples *AFTER* trigger)",
+                    Some("0"),
+                    PromptReason::ChangeTrigger,
+                ));
+            }
             (TuiState::Main, KeyCode::Char('v'), _) => {
-                let default = "dump.vcd";
-                self.state = TuiState::InPrompt(TextPromptState {
-                    title: format!("Save VCD file (default: {default})"),
-                    input: default.to_string(),
-                    cursor: default.len(),
-                    visible: 0,
-                    cursor_offset: 0,
-                    render_bounds: (0, u16::MAX),
-                })
+                self.state = TuiState::InPrompt(TextPromptState::new(
+                    "Save VCD file (default: dump.vcd)",
+                    Some("dump.vcd"),
+                    PromptReason::SaveVcd,
+                ));
             }
             (TuiState::InPrompt(_), KeyCode::Esc, _) => {
                 self.log.push(format!("Cancelled save"));
                 self.state = TuiState::Main;
             }
-            (TuiState::InPrompt(text_prompt), KeyCode::Enter, _) => {
-                if let Some(sample) = self.captured.get(0) {
-                    if let Err(err) = write_to_vcd(sample, &self.config, text_prompt.input.clone())
-                    {
-                        self.log.push(format!("Error when saving VCD: {}", err));
-                    } else {
-                        self.log.push(format!("Saved succesfully!"));
+            (TuiState::InPrompt(prompt), KeyCode::Enter, _) => {
+                match prompt.reason {
+                    PromptReason::SaveVcd => {
+                        if let Some(sample) = self.captured.get(0) {
+                            if let Err(err) =
+                                write_to_vcd(sample, &self.config, prompt.input.clone())
+                            {
+                                self.log.push(format!("Error when saving VCD: {}", err));
+                            } else {
+                                self.log.push(format!("Saved succesfully!"));
+                            }
+                        } else {
+                            self.log.push(format!("Nothing to save"));
+                        }
                     }
-                } else {
-                    self.log.push(format!("Nothing to save"));
+                    PromptReason::ChangeTrigger => {
+                        let n: u32 = prompt.input.parse().expect("FIX ME");
+                        if let Err(err) = send_packet(tx_port, &ChangeTriggerPoint(n)) {
+                            self.log.push(format!("Error: {err}"));
+                        }
+                    }
                 }
 
                 self.state = TuiState::Main;

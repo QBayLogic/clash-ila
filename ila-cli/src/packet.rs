@@ -298,6 +298,20 @@ impl TxPacket for ResetTriggerPacket {
     }
 }
 
+/// A packet going from the PC -> FPGA instructing it to change the trigger point
+pub struct ChangeTriggerPoint(pub u32);
+
+impl TxPacket for ChangeTriggerPoint {
+    fn id(&self) -> u8 {
+        0x03
+    }
+
+    fn serialize(&self) -> Vec<u8> {
+        vec![0x03, 0x69, 0x88, 0x01]
+    }
+}
+
+
 /// Send out a packet to the FPGA
 pub fn send_packet<T, P>(tx_port: &mut P, request: &T) -> Result<(), std::io::Error>
 where
