@@ -49,6 +49,9 @@
               pkgs.pkg-config
               pkgs.udev
 
+              # Surfer to view VCD
+              pkgs.surfer
+
               # Idk
               ecpprog.defaultPackage.${system}
             ]
