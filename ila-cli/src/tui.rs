@@ -263,7 +263,7 @@ impl<'a> TuiSession<'a> {
             (TuiState::InPrompt(prompt), KeyCode::Enter, _) => {
                 match prompt.reason {
                     PromptReason::SaveVcd => {
-                        if let Some(sample) = self.captured.get(0) {
+                        if let Some(sample) = self.captured.last() {
                             if let Err(err) =
                                 write_to_vcd(sample, &self.config, prompt.input.clone())
                             {
