@@ -244,7 +244,7 @@ impl<'a> TuiSession<'a> {
             }
             (TuiState::Main, KeyCode::Char('t'), _) => {
                 self.state = TuiState::InPrompt(TextPromptState::new(
-                    "Change trigger point (samples *AFTER* trigger)",
+                    format!("Change trigger point [0-{}]", self.config.buffer_size),
                     Some("0"),
                     PromptReason::ChangeTrigger,
                 ));
@@ -276,9 +276,24 @@ impl<'a> TuiSession<'a> {
                         }
                     }
                     PromptReason::ChangeTrigger => {
-                        let n: u32 = prompt.input.parse().expect("FIX ME");
-                        if let Err(err) = send_packet(tx_port, &ChangeTriggerPoint(n)) {
-                            self.log.push(format!("Error: {err}"));
+                        // Nested if's
+                        // YUCK
+                        // Can't really break out of it either, due to the state change later
+                        // Raaaugh
+                        if let Ok(n) = prompt.input.parse() {
+                            if n > self.config.buffer_size as u32 {
+                                self.log
+                                    .push(format!("Invalid input; must be specified range"));
+                            } else {
+                                self.log
+                                    .push(match send_packet(tx_port, &ChangeTriggerPoint(n)) {
+                                        Ok(_) => String::from("Trigger point change made"),
+                                        Err(err) => format!("Error: {err}"),
+                                    });
+                            }
+                        } else {
+                            self.log
+                                .push(format!("Invalid input; must be a unsigned 32 bit number"));
                         }
                     }
                 }
