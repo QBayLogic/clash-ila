@@ -8,16 +8,4 @@ import Tests.Packet qualified as P
 import Tests.RingBuffer qualified as RB
 
 main :: IO Bool
-main =
-  ( checkParallel
-      $ Group
-        "RingBuffer"
-        [ ("ReadWrite", RB.writeProperty)
-        ]
-  )
-    .&&. ( checkParallel
-            $ Group
-              "Packets"
-              [ ("DataPacketStructure", P.structureProperty)
-              ]
-         )
+main = checkParallel P.packetTestGroup .&&. checkParallel RB.ringBufferTestGroup

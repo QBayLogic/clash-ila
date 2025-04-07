@@ -1,3 +1,5 @@
+{-# LANGUAGE OverloadedStrings #-}
+
 module Tests.RingBuffer where
 
 import Clash.Prelude
@@ -99,3 +101,8 @@ writeProperty = property $ do
       expected = expectedDump d50 randomInput
 
   actual === expected
+
+ringBufferTestGroup :: Group
+ringBufferTestGroup = Group "RingBuffer"
+  [ ("Read/Write", writeProperty)
+  ]

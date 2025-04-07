@@ -1,6 +1,7 @@
 {-# LANGUAGE DuplicateRecordFields #-}
 {-# LANGUAGE OverloadedRecordDot #-}
 {-# LANGUAGE NoFieldSelectors #-}
+{-# LANGUAGE OverloadedStrings #-}
 
 module Tests.Packet where
 
@@ -161,3 +162,9 @@ structureProperty = property $ do
             (testbenchDataPacket @25 input)
 
   simulated === expected
+
+packetTestGroup :: Group
+packetTestGroup = Group "Packets"
+  [ ("DataPacketStructure", structureProperty)
+  ]
+
