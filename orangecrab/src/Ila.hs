@@ -36,7 +36,7 @@ ilaCore ::
   Signal dom Bool ->
   -- | The buffer
   (Signal dom (Index size) -> (Signal dom a, Signal dom (Index (size + 1))))
-ilaCore size capture i freeze bufClear = record
+ilaCore size capture i freeze bufClear = buffer
  where
   buffer :: Signal dom (Index size) -> (Signal dom a, Signal dom (Index (size + 1)))
   buffer =
@@ -45,8 +45,6 @@ ilaCore size capture i freeze bufClear = record
       undefined
       bufClear
       (mux (freeze .&&. capture) (Just <$> i) (pure Nothing))
-
-  record = buffer
 
 {- | The trigger handler of the ILA
 

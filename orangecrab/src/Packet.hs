@@ -5,8 +5,8 @@
 module Packet where
 
 import Clash.Prelude
-import Data.Proxy
 import Data.Maybe qualified as DM
+import Data.Proxy
 import Protocols
 import Protocols.PacketStream
 
@@ -61,8 +61,8 @@ ilaDisplayPacket = Circuit exposeIn
   exposeIn (trigger, backpressure) = out
    where
     packet True =
-      Just
-        $ PacketStreamM2S
+      Just $
+        PacketStreamM2S
           { _meta = IlaDisplayPacket
           , _last = Just 0
           , _abort = False
@@ -121,9 +121,8 @@ dataPacket ::
   Circuit
     (PacketStream dom dataWidth (BitVector 16, Index size))
     (PacketStream dom dataWidth IlaDataPacket)
-dataPacket _ = packetizerC metaTransfer headerTransfer
+dataPacket _ = packetizerC headerTransfer headerTransfer
  where
-  metaTransfer = headerTransfer
   headerTransfer oldMeta =
     IlaDataPacket
       { version = 0x0001
@@ -148,9 +147,8 @@ finalizePacket ::
   Circuit
     (PacketStream dom dataWidth packet)
     (PacketStream dom dataWidth IlaFinalizedPacket)
-finalizePacket = packetizerC metaTransfer headerTransfer
+finalizePacket = packetizerC headerTransfer headerTransfer
  where
-  metaTransfer = headerTransfer
   headerTransfer packet =
     IlaFinalizedPacket
       { preamble = 0xea88eacd
