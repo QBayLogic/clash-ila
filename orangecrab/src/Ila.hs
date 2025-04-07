@@ -99,7 +99,7 @@ triggerController config predicate core = Circuit exposeIn
     injectId oldMeta = (config.hash, oldMeta)
 
     buffer = core config.tracing shouldSample triggerRst
-    Circuit packet = dataPacket (Proxy :: Proxy a) <| mapMeta injectId <| ringBufferReaderPS buffer
+    Circuit packet = dataPacket <| mapMeta injectId <| ringBufferReaderPS buffer
 
     out = ((pure (), pure ()), snd $ packet (triggered, backpressure))
 

@@ -52,12 +52,6 @@ dataPackedModel i = out
       DL.++
       -- Id
       [0x00, 0x00, 0x00, 0x00]
-      DL.++
-      -- Width
-      (toList $ convertWord width)
-      DL.++
-      -- Length
-      (toList $ convertDouble len)
 
   byteSequence w =
     header (resize . pack $ (DL.length w) * widthInBytes)
@@ -93,9 +87,7 @@ dataPackedModel i = out
     go =
       padBytes
         IlaDataHeader
-          { length = unpack . resize . pack $ DL.length w * widthInBytes
-          , width = unpack . resize . pack $ width
-          , hash = 0x00000000
+          { hash = 0x00000000
           , version = 0x0001
           }
         <$> DL.zip isLast chopped
@@ -157,7 +149,7 @@ structureProperty = property $ do
   let simulated =
         DL.take (DL.length expected) $
           simulateC
-            (toSimulate dataPacket (DD.Proxy :: DD.Proxy (Unsigned 9)))
+            (toSimulate dataPacket)
             simOptions
             (testbenchDataPacket @25 input)
 
