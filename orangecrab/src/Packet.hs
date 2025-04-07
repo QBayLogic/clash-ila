@@ -28,53 +28,6 @@ data IlaFinalHeader = IlaFinalHeader
   }
   deriving (Generic, NFDataX, BitPack, Eq, Show)
 
-{- | ILA Display Packet
-Version 1
-
-An empty packet, merely indicating to the system it should display whatever signals the computer
-has received
-
-Size (in bytes): none
-Type:            none
-Packet type: 0x0002
-Description:
-   none
--}
-data IlaDisplayPacket = IlaDisplayPacket
-  {}
-  deriving (Generic, NFDataX, BitPack, Eq, Show)
-
-instance IlaPacketType IlaDisplayPacket where
-  ilaPacketType _ = 2
-
--- | A circuit for creating an `IlaDisplayPacket`
-ilaDisplayPacket ::
-  forall dom.
-  (HiddenClockResetEnable dom) =>
-  -- | The input is a trigger which generates an IlaDisplayPacket on the output until it receives
-  -- backpressure. The trigger only needs to be set for one clock cycle.
-  Circuit
-    (CSignal dom Bool)
-    (PacketStream dom 0 IlaDisplayPacket)
-ilaDisplayPacket = Circuit exposeIn
- where
-  exposeIn (trigger, backpressure) = out
-   where
-    packet True =
-      Just $
-        PacketStreamM2S
-          { _meta = IlaDisplayPacket
-          , _last = Just 0
-          , _abort = False
-          , _data = Nil
-          }
-    packet False = Nothing
-
-    oldTriggered = register False triggered
-    triggered = (trigger .||. oldTriggered) .&&. (not . _ready <$> backpressure)
-
-    out = (pure (), packet <$> triggered)
-
 {- | ILA Data Packet
 Version 1
 
