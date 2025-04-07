@@ -11,7 +11,7 @@ import Protocols
 import Protocols.PacketStream
 
 class IlaPacketType a where
-  kind :: a -> BitVector 16
+  ilaPacketType :: a -> BitVector 16
 
 {- | Common ILA packet structure
 
@@ -22,7 +22,7 @@ Description:
   P: Preamble, used to find new packets if an error has accured, should always be `0xea88eacd`
   T: Packet type
 -}
-data IlaFinalizedPacket = IlaFinalizedPacket
+data IlaFinalHeader = IlaFinalHeader
   { preamble :: BitVector 32
   , kind :: BitVector 16
   }
@@ -45,7 +45,7 @@ data IlaDisplayPacket = IlaDisplayPacket
   deriving (Generic, NFDataX, BitPack, Eq, Show)
 
 instance IlaPacketType IlaDisplayPacket where
-  kind _ = 2
+  ilaPacketType _ = 2
 
 -- | A circuit for creating an `IlaDisplayPacket`
 ilaDisplayPacket ::
@@ -95,16 +95,16 @@ NOTES:
  from which ILA the data id comes from. Another type of packet will determine which IDs belong to
  which ILAs.
 -}
-data IlaDataPacket = IlaDataPacket
+data IlaDataHeader = IlaDataHeader
   { version :: BitVector 16
   , id :: BitVector 16
-  , width :: BitVector 16
-  , length :: BitVector 32
+  , width :: Unsigned 16
+  , length :: Unsigned 32
   }
   deriving (Generic, NFDataX, BitPack, Eq, Show)
 
-instance IlaPacketType IlaDataPacket where
-  kind _ = 1
+instance IlaPacketType IlaDataHeader where
+  ilaPacketType _ = 1
 
 -- | Construct a data packet from a stream of raw data
 dataPacket ::
@@ -120,15 +120,15 @@ dataPacket ::
   -- | Circuit which takes in a datastream with the length as metadata and outputs packaged data
   Circuit
     (PacketStream dom dataWidth (BitVector 16, Index size))
-    (PacketStream dom dataWidth IlaDataPacket)
+    (PacketStream dom dataWidth IlaDataHeader)
 dataPacket _ = packetizerC headerTransfer headerTransfer
  where
   headerTransfer oldMeta =
-    IlaDataPacket
+    IlaDataHeader
       { version = 0x0001
       , id = fst oldMeta
       , width = natToNum @(BitSize t)
-      , length = (natToNum @(BitSize t `DivRU` 8)) * (resize $ pack $ snd oldMeta)
+      , length = (natToNum @(BitSize t `DivRU` 8)) * (unpack . resize . pack $ snd oldMeta)
       }
 
 {- | Finalize a ILA packet
@@ -146,11 +146,11 @@ finalizePacket ::
   ) =>
   Circuit
     (PacketStream dom dataWidth packet)
-    (PacketStream dom dataWidth IlaFinalizedPacket)
+    (PacketStream dom dataWidth IlaFinalHeader)
 finalizePacket = packetizerC headerTransfer headerTransfer
  where
   headerTransfer packet =
-    IlaFinalizedPacket
+    IlaFinalHeader
       { preamble = 0xea88eacd
-      , kind = kind packet
+      , kind = ilaPacketType packet
       }

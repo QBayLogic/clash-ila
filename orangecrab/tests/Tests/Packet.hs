@@ -36,7 +36,7 @@ dataPackedModel ::
   forall a.
   (BitPack a) =>
   [[a]] ->
-  [Maybe (PacketStreamM2S (BitSize a `DivRU` 8) IlaDataPacket)]
+  [Maybe (PacketStreamM2S (BitSize a `DivRU` 8) IlaDataHeader)]
 dataPackedModel i = out
  where
   widthInBytes :: Int
@@ -63,9 +63,9 @@ dataPackedModel i = out
       DL.++ (DL.concat $ toList . convertBytes <$> w)
 
   padBytes ::
-    IlaDataPacket ->
+    IlaDataHeader ->
     (Bool, [BitVector 8]) ->
-    PacketStreamM2S (BitSize a `DivRU` 8) IlaDataPacket
+    PacketStreamM2S (BitSize a `DivRU` 8) IlaDataHeader
   padBytes meta (isLast, bytes)
     | DL.length bytes < widthInBytes =
         PacketStreamM2S
@@ -83,7 +83,7 @@ dataPackedModel i = out
           , _abort = False
           }
 
-  packetize :: [a] -> [PacketStreamM2S (BitSize a `DivRU` 8) IlaDataPacket]
+  packetize :: [a] -> [PacketStreamM2S (BitSize a `DivRU` 8) IlaDataHeader]
   packetize w = go
    where
     chopped = (DLS.chunksOf widthInBytes $ byteSequence w)
@@ -91,9 +91,9 @@ dataPackedModel i = out
 
     go =
       padBytes
-        IlaDataPacket
-          { length = resize . pack $ DL.length w * widthInBytes
-          , width = resize . pack $ width
+        IlaDataHeader
+          { length = unpack . resize . pack $ DL.length w * widthInBytes
+          , width = unpack . resize . pack $ width
           , id = 0x0000
           , version = 0x0001
           }
@@ -131,7 +131,7 @@ testbenchDataPacket i = go
       { _abort = False
       , _meta = (0, len)
       , _last = if idx == len - 1 then Just (unpack . resize . pack $ widthInBytes) else Nothing
-      , _data = splitIntoBytes num
+      , _data = convertBytes num
       }
 
   convList :: [a] -> [PacketStreamM2S (BitSize a `DivRU` 8) (BitVector 16, Index maxLength)]

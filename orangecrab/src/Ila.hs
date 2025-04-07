@@ -74,7 +74,7 @@ triggerController ::
   -- The input signal is to clear the trigger
   Circuit
     (CSignal dom Bool)
-    (PacketStream dom (BitSize a `DivRU` 8) IlaDataPacket)
+    (PacketStream dom (BitSize a `DivRU` 8) IlaDataHeader)
 triggerController predicate i core = Circuit exposeIn
  where
   exposeIn (triggerRst, backpressure) = out
@@ -120,5 +120,5 @@ ila ::
   -- The input signal is to clear the trigger
   Circuit
     (CSignal dom Bool)
-    (PacketStream dom (BitSize a `DivRU` 8) IlaFinalizedPacket)
+    (PacketStream dom (BitSize a `DivRU` 8) IlaFinalHeader)
 ila size predicate sig = finalizePacket <| (triggerController predicate sig $ ilaCore size (pure True))
