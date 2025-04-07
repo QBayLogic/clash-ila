@@ -27,24 +27,24 @@ ringBuffer ::
   -- NOTE: Reads are delayed by 1 cycle
   (Signal dom a, Signal dom (Index (size + 1)))
 ringBuffer size ini clear writeData readIndex =
-  (blockRam1 NoClearOnReset size ini readAddr ramWrite, getLength)
+  (blockRam1 NoClearOnReset size ini readAddr ramWrite, bufferSize)
  where
-  getHeadTail :: Signal dom (Index size, Index size)
-  getHeadTail =
+  headTail :: Signal dom (Index size, Index size)
+  headTail =
     register (0, 0)
       $ mux
         clear
         (pure (0, 0))
-      $ liftA3 newHeadTail getHeadTail writeData getLength
+      $ liftA3 newHeadTail headTail writeData bufferSize
 
-  getLength :: Signal dom (Index (size + 1))
-  getLength =
+  bufferSize :: Signal dom (Index (size + 1))
+  bufferSize =
     register 0
       $ mux
         clear
         (pure 0)
       $ newLength
-      <$> bundle (getLength, writeData)
+      <$> bundle (bufferSize, writeData)
 
   newLength (old, Nothing) = old
   newLength (old, Just _) = satAdd SatBound old 1
@@ -61,10 +61,10 @@ ringBuffer size ini clear writeData readIndex =
       | otherwise = 0
 
   readAddr :: Signal dom (Index size)
-  readAddr = liftA2 (satAdd SatWrap) (fst $ unbundle getHeadTail) readIndex
+  readAddr = liftA2 (satAdd SatWrap) (fst $ unbundle headTail) readIndex
 
   ramWrite :: Signal dom (Maybe (Index size, a))
-  ramWrite = liftA2 (\addr write -> (fmap (addr,) write)) (snd $ unbundle getHeadTail) writeData
+  ramWrite = liftA2 (\addr write -> (fmap (addr,) write)) (snd $ unbundle headTail) writeData
 
 {- | Reads out the entire buffer using the PacketStream protocol
 The data will be chopped up in bytes and sent one-by-one each clock cycle
