@@ -18,13 +18,12 @@ class IlaPacketType a where
 Shared in every packet;
 Size (in bytes): | 4 | 2 |
 Type:            | P | T |
-Description:
-  P: Preamble, used to find new packets if an error has accured, should always be `0xea88eacd`
-  T: Packet type
 -}
 data IlaFinalHeader = IlaFinalHeader
   { preamble :: BitVector 32
+  -- ^ P: Preamble, used to find new packets if an error has accured, should always be `0xea88eacd`
   , kind :: BitVector 16
+  -- ^ T: Packet type
   }
   deriving (Generic, NFDataX, BitPack, Eq, Show)
 
@@ -36,23 +35,20 @@ The captured data will be chopped into bytes and sent over any underlaying netwo
 
 Size (in bytes): | 2 | 2 | 2 | 4 | ... |
 Type:            | V | I | W | L |  D  |
-Packet type: 0x0001
-Description:
-  V: Version number, for this version it should be `0x0001`
-  I: Data ID, an identifier for the Clash `signal` being sampled
-  W: Data width, specifies the width of the data in bits, note that data MUST be byte aligned
-  L: Length of the data stream in bytes
-  D: The data from the ILA, length specified by L in chunks of bytes, each bit is a logical level of a pin
-NOTES:
- Data ID only gives enough information to differentiate between different Clash `Signal`s. To know
- from which ILA the data id comes from. Another type of packet will determine which IDs belong to
- which ILAs.
+
+NOTE: Data ID only gives enough information to differentiate between different Clash `Signal`s. To know
+from which ILA the data id comes from. Another type of packet will determine which IDs belong to
+which ILAs.
 -}
 data IlaDataHeader = IlaDataHeader
   { version :: BitVector 16
+  -- ^ V: Version number, for this version it should be `0x0001`
   , id :: BitVector 16
+  -- ^ I: Data ID, an identifier for the Clash `signal` being sampled
   , width :: Unsigned 16
+  -- ^ W: Data width, specifies the width of the data in bits, note that data MUST be byte aligned
   , length :: Unsigned 32
+  -- ^ L: Length of the data stream in bytes
   }
   deriving (Generic, NFDataX, BitPack, Eq, Show)
 
