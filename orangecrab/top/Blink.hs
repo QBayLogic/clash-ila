@@ -41,6 +41,7 @@ triggerResetButtons = Circuit exposeIn
 
     out = (pure (), reg)
 
+-- | UART ILA demonstration toplevel
 topLogicUart ::
   forall dom baud.
   (HiddenClockResetEnable dom, ValidBaud dom baud) =>
@@ -67,6 +68,7 @@ topLogicUart baud btns rx = go
 
   go = snd $ main ((btns, rx), pure ())
 
+-- | The top entity
 topEntity ::
   "CLK" ::: Clock Dom48 ->
   "BTN" ::: Reset Dom48 ->

@@ -12,6 +12,12 @@ import Data.Data
 import Protocols
 import Protocols.PacketStream
 
+{- | The buffer of the ila, with signals to control wether or not the signals get captured
+
+This function exposes the barebones of the ILA capturing logic and it will only accept boolean
+values to determine wether or not to capture samples. For more advanced trigger logic, check out
+`triggerController`
+-}
 ilaCore ::
   forall dom size a.
   ( HiddenClockResetEnable dom
@@ -42,6 +48,11 @@ ilaCore size capture i freeze bufClear = record
 
   record = buffer
 
+{- | The trigger handler of the ILA
+
+Given a predicate, it will test it against incoming samples and tell the buffer to stop sampling
+new data or not.
+-}
 triggerController ::
   forall dom size a.
   ( HiddenClockResetEnable dom
@@ -85,6 +96,13 @@ triggerController predicate i core = Circuit exposeIn
 
     out = (pure (), snd $ packet (triggered, backpressure))
 
+{- | The ILA component itself
+
+Given any signal and a trigger condition, it will be capable of sampling the signal up until
+it is triggered. At which point it will proceed to send out all the samples it captured via the
+`PacketStream` protocol. This data can than be forwarded to an external port and the ILA CLI
+will display this data.
+-}
 ila ::
   forall dom size a.
   ( HiddenClockResetEnable dom

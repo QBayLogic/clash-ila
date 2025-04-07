@@ -7,6 +7,11 @@ import Protocols
 import Protocols.Df qualified as Df
 import Protocols.PacketStream
 
+{- | Send out `Df` data through UART
+
+In essence just a tiny wrapper around `uart` to provide backpressure using `Circuit`s rather than
+manual signals
+-}
 uartDf ::
   forall dom baud.
   (HiddenClockResetEnable dom, ValidBaud dom baud) =>
@@ -59,8 +64,9 @@ holdUntilAck = Circuit exposeIn
 
     out = (pure (), hold)
 
--- | Silently drops the meta of a `PacketStream`
--- Makes no other modifications to the `PacketStream` itself
+{- | Silently drops the meta of a `PacketStream`
+Makes no other modifications to the `PacketStream` itself
+-}
 dropMeta ::
   forall dom a meta.
   Circuit
