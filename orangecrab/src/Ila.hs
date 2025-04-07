@@ -78,9 +78,9 @@ triggerController ::
   -- | Circuit outputting the content of the buffer whenever the predicate has been triggered
   -- The input signal is to clear the trigger
   Circuit
-    (CSignal dom Bool)
+    (CSignal dom (Maybe (Index size)), CSignal dom Bool)
     (PacketStream dom (BitSize a `DivRU` 8) IlaDataHeader)
-triggerController predicate i core = Circuit exposeIn
+triggerController config predicate core = Circuit exposeIn
  where
   exposeIn ((newTrigPoint, triggerRst), backpressure) = out
    where
@@ -188,7 +188,7 @@ ila ::
   -- TODO: example? Not added one yet due to possible change in API
   Circuit
     (CSignal dom (Maybe (BitVector 8)))
-    (PacketStream dom (BitSize a `DivRU` 8) IlaFinalizedPacket)
+    (PacketStream dom (BitSize a `DivRU` 8) IlaFinalHeader)
 ila config predicate = circuit $ \rxByte -> do
   [dec0, dec1] <- fanoutCSig d2 <| deserializeToPacket -< rxByte
 
