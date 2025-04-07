@@ -63,10 +63,6 @@ pub enum ParseErr {
 struct RawDataPacket {
     /// The ILA configuration hash
     hash: u32,
-    /// The width of the signal in bits
-    width: u16,
-    /// How many samples this transaction contained
-    length: u32,
     /// The samples themselves, in chunks of bytes
     buffer: Vec<u8>,
 }
@@ -81,8 +77,6 @@ impl RawDataPacket {
 
         let mut raw_packet = RawDataPacket {
             hash: iter.next_u32().ok_or(ParseErr::NeedsMoreBytes)?,
-            width: iter.next_u16().ok_or(ParseErr::NeedsMoreBytes)?,
-            length: iter.next_u32().ok_or(ParseErr::NeedsMoreBytes)?,
             buffer: vec![],
         };
 

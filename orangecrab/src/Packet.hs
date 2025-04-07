@@ -48,10 +48,6 @@ data IlaDataHeader = IlaDataHeader
   -- ^ V: Version number, for this version it should be `0x0001`
   , hash :: BitVector 32
   -- ^ I: ILA Hash, 
-  , width :: Unsigned 16
-  -- ^ W: Data width, specifies the width of the data in bits, note that data MUST be byte aligned
-  , length :: Unsigned 32
-  -- ^ L: Length of the data stream in bytes
   }
   deriving (Generic, NFDataX, BitPack, Eq, Show)
 
@@ -60,27 +56,23 @@ instance IlaPacketType IlaDataHeader where
 
 -- | Construct a data packet from a stream of raw data
 dataPacket ::
-  forall dom dataWidth size t.
+  forall dom dataWidth size.
   ( HiddenClockResetEnable dom
   , KnownNat dataWidth
   , KnownNat size
-  , BitPack t
   , 1 <= dataWidth
   , 1 <= size
   ) =>
-  Proxy t ->
   -- | Circuit which takes in a datastream with the length as metadata and outputs packaged data
   Circuit
     (PacketStream dom dataWidth (BitVector 32, Index size))
     (PacketStream dom dataWidth IlaDataHeader)
-dataPacket _ = packetizerC headerTransfer headerTransfer
+dataPacket = packetizerC headerTransfer headerTransfer
  where
   headerTransfer oldMeta =
     IlaDataHeader
       { version = 0x0001
       , hash = fst oldMeta
-      , width = natToNum @(BitSize t)
-      , length = (natToNum @(BitSize t `DivRU` 8)) * (unpack . resize . pack $ snd oldMeta)
       }
 
 {- | Finalize a ILA packet
