@@ -59,6 +59,15 @@ holdUntilAck = Circuit exposeIn
 
     out = (pure (), hold)
 
+-- | Silently drops the meta of a `PacketStream`
+-- Makes no other modifications to the `PacketStream` itself
+dropMeta ::
+  forall dom a meta.
+  Circuit
+    (PacketStream dom a meta)
+    (PacketStream dom a ())
+dropMeta = mapMeta (\_ -> ())
+
 {- | Converts `PacketStream` into a `Df` of bytes. For packet stream data larger than one byte,
 it will send out bytes in most-significant-byte order.
 
@@ -66,7 +75,7 @@ NOTE: Please do properly follow the PacketStream standard and keep sending the s
 `_ready` is raised. Not doing so will cause issues.
 -}
 ps2df ::
-  forall dom dataWidth a.
+  forall dom dataWidth.
   ( HiddenClockResetEnable dom
   , KnownNat dataWidth
   , 1 <= dataWidth
@@ -74,44 +83,20 @@ ps2df ::
   -- | The input `PacketStream` and the output `Df`, will only set `_ready` to true once every
   -- byte in PacketStream has been sent over in Df
   Circuit
-    (PacketStream dom dataWidth a)
+    (PacketStream dom dataWidth ())
     (Df dom (BitVector 8))
-ps2df = Circuit exposeIn
+ps2df = Circuit exposeIn <| downConverterC @1
  where
   exposeIn (incoming, backpressure) = out
    where
-    -- TODO: ADD PROPER TESTS!!!!
-    -- This function, if broken, would be the cause of A LOTTA HEADACHES
-    -- I experienced that first hand
+    toDf :: Maybe (PacketStreamM2S 1 ()) -> Df.Data (BitVector 8)
+    toDf (Just packet) = Df.Data $ at d0 (_data packet)
+    toDf Nothing = Df.NoData
 
-    shouldIncrement = backpressure .==. (pure $ Ack True)
-
-    maxIndex :: Signal dom (Index dataWidth)
-    maxIndex = maxIndex' <$> incoming
-
-    maxIndex' (Just packet) = resize $ (DM.fromMaybe maxBound (_last packet)) - 1
-    maxIndex' Nothing = 0
-
-    index :: Signal dom (Index dataWidth)
-    index = register 0 $ mux isLast 0 $ liftA3 increment index maxIndex shouldIncrement
-
-    increment :: Index dataWidth -> Index dataWidth -> Bool -> Index dataWidth
-    increment current maxIdx True
-      | current >= maxIdx = maxIdx
-      | otherwise = current + 1
-    increment current maxIdx False
-      | current >= maxIdx = maxIdx
-      | otherwise = current
-
-    isLast = index .==. maxIndex .&&. shouldIncrement
-
-    retrieve ::
-      Index dataWidth -> Maybe (PacketStreamM2S dataWidth a) -> Df.Data (BitVector 8)
-    retrieve _ Nothing = Df.NoData
-    retrieve i (Just m2s) = Df.Data $ _data m2s !! i
+    ack2ps :: Ack -> PacketStreamS2M
+    ack2ps (Ack b) = PacketStreamS2M b
 
     out =
-      ( PacketStreamS2M <$> isLast
-      , liftA2 retrieve index incoming
+      ( ack2ps <$> backpressure
+      , toDf <$> incoming
       )
-

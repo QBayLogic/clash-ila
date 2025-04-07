@@ -62,7 +62,7 @@ topLogicUart baud btns rx = go
     (_rxByte, txBit) <- uartDf baud -< (txByte, rxBit)
     triggerReset <- triggerResetButtons -< btns
     packet <- ila (SNat @100) (==300) counter -< triggerReset
-    txByte <- ps2df -< packet
+    txByte <- ps2df <| dropMeta -< packet
     idC -< txBit
 
   go = snd $ main ((btns, rx), pure ())
