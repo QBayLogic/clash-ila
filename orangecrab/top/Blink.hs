@@ -81,7 +81,7 @@ topLogicUart baud btns rx = go
         )
         (\(a, _, _) -> a == 300)
         -< rxByte
-    txByte <- ps2df -< packet
+    txByte <- ps2df <| dropMeta -< packet
     idC -< txBit
 
   go = snd $ main (rx, pure ())

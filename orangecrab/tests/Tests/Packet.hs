@@ -51,7 +51,7 @@ dataPackedModel i = out
     [0x00, 0x01]
       DL.++
       -- Id
-      [0x00, 0x00]
+      [0x00, 0x00, 0x00, 0x00]
       DL.++
       -- Width
       (toList $ convertWord width)
@@ -95,7 +95,7 @@ dataPackedModel i = out
         IlaDataHeader
           { length = unpack . resize . pack $ DL.length w * widthInBytes
           , width = unpack . resize . pack $ width
-          , id = 0x0000
+          , hash = 0x00000000
           , version = 0x0001
           }
         <$> DL.zip isLast chopped
@@ -117,7 +117,7 @@ testbenchDataPacket ::
   , 1 <= maxLength
   ) =>
   [[a]] ->
-  [Maybe (PacketStreamM2S (BitSize a `DivRU` 8) (BitVector 16, Index maxLength))]
+  [Maybe (PacketStreamM2S (BitSize a `DivRU` 8) (BitVector 32, Index maxLength))]
 testbenchDataPacket i = go
  where
   widthInBytes :: Int
@@ -126,7 +126,7 @@ testbenchDataPacket i = go
   toPacket ::
     Index maxLength ->
     (Index maxLength, a) ->
-    PacketStreamM2S (BitSize a `DivRU` 8) (BitVector 16, Index maxLength)
+    PacketStreamM2S (BitSize a `DivRU` 8) (BitVector 32, Index maxLength)
   toPacket len (idx, num) =
     PacketStreamM2S
       { _abort = False
@@ -135,13 +135,13 @@ testbenchDataPacket i = go
       , _data = convertBytes num
       }
 
-  convList :: [a] -> [PacketStreamM2S (BitSize a `DivRU` 8) (BitVector 16, Index maxLength)]
+  convList :: [a] -> [PacketStreamM2S (BitSize a `DivRU` 8) (BitVector 32, Index maxLength)]
   convList l = toPacket (unpack . resize . pack $ DL.length l) <$> DL.zip [0 ..] l
 
-  package :: [a] -> [Maybe (PacketStreamM2S (BitSize a `DivRU` 8) (BitVector 16, Index maxLength))]
+  package :: [a] -> [Maybe (PacketStreamM2S (BitSize a `DivRU` 8) (BitVector 32, Index maxLength))]
   package l = (Just <$> convList l)
 
-  go :: [Maybe (PacketStreamM2S (BitSize a `DivRU` 8) (BitVector 16, Index maxLength))]
+  go :: [Maybe (PacketStreamM2S (BitSize a `DivRU` 8) (BitVector 32, Index maxLength))]
   go = DL.concatMap package i
 
 structureProperty :: Property

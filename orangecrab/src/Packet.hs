@@ -18,7 +18,7 @@ data IlaIncomingPacket = IlaResetTrigger | IlaChangeTriggerPoint (BitVector 32)
   deriving (Generic, NFDataX, BitPack, Eq, Show)
 
 class IlaPacketType a where
-  ilaPacketType :: a -> BitVector 16
+  ilaPacketType :: a -> BitVector 8
 
 {- | Common ILA packet structure
 
@@ -29,7 +29,7 @@ Type:            | P | T |
 data IlaFinalHeader = IlaFinalHeader
   { preamble :: BitVector 32
   -- ^ P: Preamble, used to find new packets if an error has accured, should always be `0xea88eacd`
-  , kind :: BitVector 16
+  , kind :: BitVector 8
   -- ^ T: Packet type
   }
   deriving (Generic, NFDataX, BitPack, Eq, Show)
@@ -42,16 +42,12 @@ The captured data will be chopped into bytes and sent over any underlaying netwo
 
 Size (in bytes): | 2 | 2 | 2 | 4 | ... |
 Type:            | V | I | W | L |  D  |
-
-NOTE: Data ID only gives enough information to differentiate between different Clash `Signal`s. To know
-from which ILA the data id comes from. Another type of packet will determine which IDs belong to
-which ILAs.
 -}
 data IlaDataHeader = IlaDataHeader
   { version :: BitVector 16
   -- ^ V: Version number, for this version it should be `0x0001`
-  , id :: BitVector 16
-  -- ^ I: Data ID, an identifier for the Clash `signal` being sampled
+  , hash :: BitVector 32
+  -- ^ I: ILA Hash, 
   , width :: Unsigned 16
   -- ^ W: Data width, specifies the width of the data in bits, note that data MUST be byte aligned
   , length :: Unsigned 32
@@ -75,7 +71,7 @@ dataPacket ::
   Proxy t ->
   -- | Circuit which takes in a datastream with the length as metadata and outputs packaged data
   Circuit
-    (PacketStream dom dataWidth (BitVector 16, Index size))
+    (PacketStream dom dataWidth (BitVector 32, Index size))
     (PacketStream dom dataWidth IlaDataHeader)
 dataPacket _ = packetizerC headerTransfer headerTransfer
  where
