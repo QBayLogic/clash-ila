@@ -1,72 +1,164 @@
 {-# LANGUAGE DuplicateRecordFields #-}
 {-# LANGUAGE OverloadedRecordDot #-}
+{-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE TemplateHaskellQuotes #-}
 {-# LANGUAGE NoFieldSelectors #-}
+{-# LANGUAGE UndecidableInstances #-}
 
 module ConfigGen where
 
-import Clash.Prelude hiding (Exp)
+import Clash.Prelude hiding (Exp, Type)
 
 import Data.Aeson
 
-import Language.Haskell.TH
-
+import Data.Either
 import Data.HList
 import Data.Hashable
 
+import Text.Show.Pretty
+
+import Clash.Annotations.Primitive
+import Clash.Backend
+import Clash.Core.Term
+import Clash.Core.TermLiteral
+import Clash.Core.Type
+import Clash.Core.Var
+import Clash.Netlist.BlackBox
+import Clash.Netlist.BlackBox.Types
+import Clash.Netlist.Types
+import Clash.Primitives.DSL
+import Control.Lens qualified
+import Control.Monad.State
+import Data.String.Interpolate (__i)
+import GHC.Stack (HasCallStack, callStack, prettyCallStack)
+import Prettyprinter
+import Prelude qualified as P
+
+import Data.List
+
+type family Length xs where
+  Length '[] = 0
+  Length (x ': xs) = 1 + Length xs
+
 -- | A datakind enforcing a HList to be convertable to a list of tuples, with size and the label of each signal
 class NamedSignal ts where
-  getSizeAndName :: HList ts -> [(Int, String)]
+  getSizeAndName :: HList ts -> Vec (Length ts) (Int, String)
 
 instance NamedSignal '[] where
-  getSizeAndName HNil = []
+  getSizeAndName HNil = Nil
 
 instance forall dom t ts. (BitPack t, NamedSignal ts) => NamedSignal ((Signal dom t, String) : ts) where
-  getSizeAndName (HCons (_, label) xs) = (natToNum @(BitSize t), label) : getSizeAndName xs
+  getSizeAndName (HCons (_, label) xs) = (natToNum @(BitSize t), label) :> getSizeAndName xs
 
-writeConfig ::
-  forall dom a n ts.
-  ( KnownNat n
-  , NamedSignal ts
-  , Lift a
+-- class IlaSignal (dom :: Domain) a where
+--   ilaSignalX :: a
+--
+-- instance IlaSignal dom (Signal dom ()) where
+--   ilaSignalX = pure ()
+--
+-- instance IlaSignal dom a => IlaSignal dom (Signal dom i -> a) where
+--   ilaSignalX !_clk = ilaSignalX @dom @a
+
+writeSignalInfo ::
+  forall dom n.
+  (HiddenClockResetEnable dom) =>
+  Vec n (Int, String) ->
+  BitVector 32
+writeSignalInfo !_sig = 0 :: BitVector 32
+{-# OPAQUE writeSignalInfo #-}
+{-# ANN writeSignalInfo hasBlackBox #-}
+{-# ANN
+  writeSignalInfo
+  ( let
+      primitive = 'writeSignalInfo
+      template = 'signalInfoBBF
+     in
+      InlineYamlPrimitive
+        [minBound ..]
+        [__i|
+      BlackBoxHaskell:
+        name: #{primitive}
+        templateFunction: #{template}
+        workInfo: Always
+    |]
+  )
+  #-}
+
+signalInfoBBF :: (HasCallStack) => BlackBoxFunction
+signalInfoBBF _ _primitive args _ = Control.Lens.view tcCache >>= go
+ where
+  go tcm
+    | [_, sizes] <- lefts args
+    , [_, (coreView tcm -> LitTy (NumTy n))] <- rights args
+    , Just (SomeNat (Proxy :: Proxy n)) <- someNatVal n =
+        mkBlackBox $ getSizes @n sizes
+    | otherwise = errorX $ "I am literally crying rn: " P.++ show (P.length $ lefts args)
+
+  mkBlackBox sizes = pure $ Right (blackBoxMeta sizes, blackBox)
+
+  getSizes :: forall n. (KnownNat n) => Term -> Vec n (Int, String)
+  getSizes term = case termToData @(Vec n (Int, String)) term of
+    Left _ -> errorX "Failed to coerce term into Vec n Int"
+    Right s -> s
+
+  blackBoxMeta :: Vec n (Int, String) -> BlackBoxMeta
+  blackBoxMeta sizes =
+    emptyBlackBoxMeta
+      { bbKind = TDecl
+      , bbRenderVoid = RenderVoid
+      , bbIncludes =
+          [
+            ( ("ilaconf", "json")
+            , BBFunction (show 'renderJSONTF) 0 (renderJSONTF sizes)
+            )
+          ]
+      }
+
+  -- We actually don't want to generate special HDL, so this will be black
+  blackBox :: BlackBox
+  blackBox = BBFunction (show 'renderHDLTF) 0 renderHDLTF
+{-# NOINLINE signalInfoBBF #-}
+
+renderHDLTF :: (HasCallStack) => TemplateFunction
+renderHDLTF = TemplateFunction [] (const True) (\_ -> pure "")
+{-# NOINLINE renderHDLTF #-}
+
+renderJSONTF :: (HasCallStack) => Vec n (Int, String) -> TemplateFunction
+renderJSONTF args = TemplateFunction [] (const True) (renderJSON args)
+{-# NOINLINE renderJSONTF #-}
+
+renderJSON ::
+  forall s n.
+  ( HasCallStack
+  , Backend s
   ) =>
-  -- | How many samples should it capture of each signal?
-  SNat n ->
-  -- | Merely an identifier, recommended to be the name of the toplevel design, but it can be any name you fancy
-  String ->
-  -- | A list of signals and labels (Strings) tupled together to sample
-  HList ts ->
-  -- | The same list of signals, but then bundled together
-  Signal dom a ->
-  -- | a `IlaConfig` in AST form, this should be passed directly to the ILA
-  IO (Exp)
-writeConfig size toplevelName namedSignals bundledSignals = do
-  let sizeNames = getSizeAndName namedSignals
+  Vec n (Int, String) ->
+  BlackBoxContext ->
+  State s (Doc ())
+-- renderJSON args _context = errorX $ show args
+renderJSON args _context = pure $ [__i|Sizes are: #{args}|]
 
-  let genSignals = (uncurry $ flip GenSignal) <$> sizeNames
+-- prepareNamedSignals ::
+--   forall ts n.
+--   (KnownNat n, NamedSignal ts n) =>
+--   HList ts ->
+--   GenIlas
+-- prepareNamedSignals = errorX ""
 
-  let nonHashed = GenIla toplevelName (natToNum @n) 0 genSignals
-  let hashValue = hash nonHashed
-  let hashValueBv = resize $ pack hashValue :: BitVector 32
-  let hashedIla = GenIla toplevelName (natToNum @n) hashValue genSignals
+  -- | hwType <- tInputs context = errorX $ show hwType
+  -- -- \| _domain : signal : _hash <- lefts args = errorX
+  -- | otherwise =
+  --     -- errorX $ "Invalid term arguments when rendering ilaconfig.json: " <> ppShow (lefts args)
+  --     errorX $ "Invalid term arguments when rendering ilaconfig.json: "
+ -- where
 
-  let genIlas = GenIlas [hashedIla]
-
-  encodeFile "ilaconf.json" genIlas
-
-  let ilaConf =
-        IlaConfig
-          { hash = hashValueBv
-          , size = size
-          , tracing = bundledSignals
-          }
-
-  [|ilaConf|]
+{-# NOINLINE renderJSON #-}
 
 ilaConfig ::
   forall dom a n ts.
-  ( KnownNat n
+  ( HiddenClockResetEnable dom
+  , KnownNat n
   , NamedSignal ts
   , Lift a
   ) =>
@@ -84,7 +176,9 @@ ilaConfig ::
   IlaConfig n (Signal dom a)
 ilaConfig size triggerPoint toplevelName namedSignals bundledSignals =
   IlaConfig
-    { hash = 0
+    { -- { hash = writeSignalInfo $ getSizeAndName namedSignals
+      -- hash = writeSignalInfo $ (30 :> 40 :> 50 :> Nil)
+      hash = writeSignalInfo $ getSizeAndName namedSignals
     , size = size
     , triggerPoint = triggerPoint
     , tracing = bundledSignals
