@@ -3,8 +3,8 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE TemplateHaskellQuotes #-}
-{-# LANGUAGE NoFieldSelectors #-}
 {-# LANGUAGE UndecidableInstances #-}
+{-# LANGUAGE NoFieldSelectors #-}
 
 module ConfigGen where
 
@@ -37,28 +37,38 @@ import Prelude qualified as P
 
 import Data.List
 
-type family Length xs where
-  Length '[] = 0
-  Length (x ': xs) = 1 + Length xs
+class LabelledSignals t n dom a where
+  ilaProbe' :: (Vec n GenSignal, Signal dom a) -> t
 
--- | A datakind enforcing a HList to be convertable to a list of tuples, with size and the label of each signal
-class NamedSignal ts where
-  getSizeAndName :: HList ts -> Vec (Length ts) (Int, String)
+instance (KnownNat n, 1 <= n, m ~ n) => LabelledSignals (Vec m GenSignal, Signal dom a) n dom a where
+  ilaProbe' :: (Vec n GenSignal, Signal dom a) -> (Vec n GenSignal, Signal dom a)
+  ilaProbe' acc = acc
 
-instance NamedSignal '[] where
-  getSizeAndName HNil = Nil
+instance
+  ( LabelledSignals cont (n + 1) dom nextS
+  , BitPack a
+  , nextS ~ (s, a)
+  ) =>
+  LabelledSignals ((Signal dom a, String) -> cont) n dom s
+  where
+  ilaProbe' :: (Vec n GenSignal, Signal dom s) -> (Signal dom a, String) -> cont
+  ilaProbe' (acc, sigAcc) (sig, label) =
+    let
+      newAcc :: Vec (n + 1) GenSignal
+      newAcc =
+        GenSignal
+          { name = label
+          , width = natToNum @(BitSize a)
+          }
+          :> acc
 
-instance forall dom t ts. (BitPack t, NamedSignal ts) => NamedSignal ((Signal dom t, String) : ts) where
-  getSizeAndName (HCons (_, label) xs) = (natToNum @(BitSize t), label) :> getSizeAndName xs
+      newSig :: Signal dom nextS
+      newSig = bundle (sigAcc, sig)
+     in
+      ilaProbe' (newAcc, newSig)
 
--- class IlaSignal (dom :: Domain) a where
---   ilaSignalX :: a
---
--- instance IlaSignal dom (Signal dom ()) where
---   ilaSignalX = pure ()
---
--- instance IlaSignal dom a => IlaSignal dom (Signal dom i -> a) where
---   ilaSignalX !_clk = ilaSignalX @dom @a
+ilaProbe :: forall dom t. (HiddenClockResetEnable dom, LabelledSignals t 0 dom ()) => t
+ilaProbe = ilaProbe' (Nil, pure () :: Signal dom ())
 
 writeSignalInfo ::
   forall dom n.
@@ -93,13 +103,13 @@ signalInfoBBF _ _primitive args _ = Control.Lens.view tcCache >>= go
     , [_, (coreView tcm -> LitTy (NumTy n))] <- rights args
     , Just (SomeNat (Proxy :: Proxy n)) <- someNatVal n =
         mkBlackBox $ getSizes @n sizes
-    | otherwise = errorX $ "I am literally crying rn: " P.++ show (P.length $ lefts args)
+    | otherwise = errorX "Improper data given, expected Vec n (Int, String)"
 
   mkBlackBox sizes = pure $ Right (blackBoxMeta sizes, blackBox)
 
   getSizes :: forall n. (KnownNat n) => Term -> Vec n (Int, String)
   getSizes term = case termToData @(Vec n (Int, String)) term of
-    Left _ -> errorX "Failed to coerce term into Vec n Int"
+    Left _ -> errorX "Failed to coerce term into Vec n (Int, String), cannot write ILA config to file."
     Right s -> s
 
   blackBoxMeta :: Vec n (Int, String) -> BlackBoxMeta
@@ -136,30 +146,14 @@ renderJSON ::
   Vec n (Int, String) ->
   BlackBoxContext ->
   State s (Doc ())
--- renderJSON args _context = errorX $ show args
 renderJSON args _context = pure $ [__i|Sizes are: #{args}|]
-
--- prepareNamedSignals ::
---   forall ts n.
---   (KnownNat n, NamedSignal ts n) =>
---   HList ts ->
---   GenIlas
--- prepareNamedSignals = errorX ""
-
-  -- | hwType <- tInputs context = errorX $ show hwType
-  -- -- \| _domain : signal : _hash <- lefts args = errorX
-  -- | otherwise =
-  --     -- errorX $ "Invalid term arguments when rendering ilaconfig.json: " <> ppShow (lefts args)
-  --     errorX $ "Invalid term arguments when rendering ilaconfig.json: "
- -- where
-
 {-# NOINLINE renderJSON #-}
 
 ilaConfig ::
-  forall dom a n ts.
+  forall dom a n s.
   ( HiddenClockResetEnable dom
-  , KnownNat n
-  , NamedSignal ts
+  , -- , NamedSignal ts
+    KnownNat n
   , Lift a
   ) =>
   -- | How many samples should it capture of each signal?
@@ -168,20 +162,16 @@ ilaConfig ::
   Index n ->
   -- | Merely an identifier, recommended to be the name of the toplevel design, but it can be any name you fancy
   String ->
-  -- | A list of signals and labels (Strings) tupled together to sample
-  HList ts ->
-  -- | The same list of signals, but then bundled together
-  Signal dom a ->
+  -- | A list
+  (Vec s GenSignal, Signal dom a) ->
   -- | The ILA configuration itself
   IlaConfig n (Signal dom a)
-ilaConfig size triggerPoint toplevelName namedSignals bundledSignals =
+ilaConfig size triggerPoint toplevelName (genSignal, bundled) =
   IlaConfig
-    { -- { hash = writeSignalInfo $ getSizeAndName namedSignals
-      -- hash = writeSignalInfo $ (30 :> 40 :> 50 :> Nil)
-      hash = writeSignalInfo $ getSizeAndName namedSignals
+    { hash = writeSignalInfo ((\s -> (s.width, s.name)) <$> genSignal)
     , size = size
     , triggerPoint = triggerPoint
-    , tracing = bundledSignals
+    , tracing = bundled
     }
 
 -- A record containing the actual configuration of the ILA

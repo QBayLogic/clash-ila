@@ -60,7 +60,7 @@ topLogicUart ::
 topLogicUart baud btns rx = go
  where
   -- Simple demo signal to 'debug'
-  counter0 :: (HiddenClockResetEnable dom) => Signal dom (BitVector 9)
+  counter0 :: (HiddenClockResetEnable dom) => Signal dom (BitVector 10)
   counter0 = register 0 $ satAdd SatWrap 1 <$> counter0
   counter1 :: (HiddenClockResetEnable dom) => Signal dom (BitVector 9)
   counter1 = register 20 $ satAdd SatWrap 1 <$> counter1
@@ -76,10 +76,9 @@ topLogicUart baud btns rx = go
             d100
             20
             "name"
-            ((counter0, "Base") .*. (counter1, "+20") .*. (counter2, "+40") .*. HNil)
-            (bundle (counter0, counter1, counter2))
+            (ilaProbe (counter0, "c0") (counter1, "c1") (counter2, "c2") :: (Vec 3 GenSignal, Signal dom ((((), BitVector 10), BitVector 9), BitVector 9)))
         )
-        (\(a, _, _) -> a == 300)
+        (\(((_, a), _), _) -> a == 300)
         -< rxByte
     txByte <- ps2df <| dropMeta -< packet
     idC -< txBit
