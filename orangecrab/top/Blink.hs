@@ -12,7 +12,6 @@ import Data.Maybe qualified as DM
 
 import Communication
 import ConfigGen
-import Data.HList
 import Domain
 import Ila
 import Pmod
@@ -62,7 +61,7 @@ topLogicUart baud btns rx = go
   -- Simple demo signal to 'debug'
   counter0 :: (HiddenClockResetEnable dom) => Signal dom (BitVector 10)
   counter0 = register 0 $ satAdd SatWrap 1 <$> counter0
-  counter1 :: (HiddenClockResetEnable dom) => Signal dom (BitVector 9)
+  counter1 :: (HiddenClockResetEnable dom) => Signal dom (BitVector 69)
   counter1 = register 20 $ satAdd SatWrap 1 <$> counter1
   counter2 :: (HiddenClockResetEnable dom) => Signal dom (BitVector 9)
   counter2 = register 40 $ satAdd SatWrap 1 <$> counter2
@@ -76,7 +75,7 @@ topLogicUart baud btns rx = go
             d100
             20
             "name"
-            (ilaProbe (counter0, "c0") (counter1, "c1") (counter2, "c2") :: (Vec 3 GenSignal, Signal dom ((((), BitVector 10), BitVector 9), BitVector 9)))
+            (ilaProbe (counter0, "c0") (counter1, "c1") (counter2, "c2") :: (Vec 3 GenSignal, Signal dom ((((), BitVector 10), BitVector 69), BitVector 9)))
         )
         (\(((_, a), _), _) -> a == 300)
         -< rxByte

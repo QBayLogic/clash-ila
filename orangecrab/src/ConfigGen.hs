@@ -13,7 +13,6 @@ import Clash.Prelude hiding (Exp, Type)
 import Data.Aeson
 
 import Data.Either
-import Data.HList
 import Data.Hashable
 
 import Text.Show.Pretty
@@ -35,6 +34,7 @@ import GHC.Stack (HasCallStack, callStack, prettyCallStack)
 import Prettyprinter
 import Prelude qualified as P
 
+import Data.Data
 import Data.List
 
 class LabelledSignals t n dom a where
@@ -71,11 +71,14 @@ ilaProbe :: forall dom t. (HiddenClockResetEnable dom, LabelledSignals t 0 dom (
 ilaProbe = ilaProbe' (Nil, pure () :: Signal dom ())
 
 writeSignalInfo ::
-  forall dom n.
+  forall dom n s.
   (HiddenClockResetEnable dom) =>
+  String ->
+  SNat s ->
   Vec n (Int, String) ->
   BitVector 32
-writeSignalInfo !_sig = 0 :: BitVector 32
+-- writeSignalInfo !_toplevel !_bufSize !_sigInfo = 0 :: BitVector 32
+writeSignalInfo !_toplevel !_bufSize !_sigInfo = 0 :: BitVector 32
 {-# OPAQUE writeSignalInfo #-}
 {-# ANN writeSignalInfo hasBlackBox #-}
 {-# ANN
@@ -99,20 +102,34 @@ signalInfoBBF :: (HasCallStack) => BlackBoxFunction
 signalInfoBBF _ _primitive args _ = Control.Lens.view tcCache >>= go
  where
   go tcm
-    | [_, sizes] <- lefts args
-    , [_, (coreView tcm -> LitTy (NumTy n))] <- rights args
-    , Just (SomeNat (Proxy :: Proxy n)) <- someNatVal n =
-        mkBlackBox $ getSizes @n sizes
+    | [_, toplevel, _, sigInfo] <- lefts args
+    , [_, (coreView tcm -> LitTy (NumTy n)), (coreView tcm -> LitTy (NumTy s))] <- rights args
+    , Just (SomeNat (Proxy :: Proxy n)) <- someNatVal n
+    , Just (SomeNat (Proxy :: Proxy s)) <- someNatVal s =
+        mkBlackBox $ GenIlas [getGenIla @n toplevel (SNat @s) (getSigInfo sigInfo)]
     | otherwise = errorX "Improper data given, expected Vec n (Int, String)"
 
   mkBlackBox sizes = pure $ Right (blackBoxMeta sizes, blackBox)
 
-  getSizes :: forall n. (KnownNat n) => Term -> Vec n (Int, String)
-  getSizes term = case termToData @(Vec n (Int, String)) term of
-    Left _ -> errorX "Failed to coerce term into Vec n (Int, String), cannot write ILA config to file."
-    Right s -> s
+  coerceToType :: (TermLiteral a) => Term -> String -> a
+  coerceToType term err = case termToData term of
+    Left _ -> errorX [__i|Cannot coerce term into an #{err}, cannot write ILA config|]
+    Right v -> v
 
-  blackBoxMeta :: Vec n (Int, String) -> BlackBoxMeta
+  getSigInfo :: forall n. (KnownNat n) => Term -> Vec n (Int, String)
+  getSigInfo term = coerceToType term "signal info"
+
+  getGenIla ::
+    forall n s. (KnownNat n, KnownNat s) => Term -> SNat s -> Vec n (Int, String) -> GenIla
+  getGenIla toplevel bufSize sigInfo =
+    GenIla
+      { toplevel = coerceToType toplevel "toplevel name"
+      , bufferSize = snatToNum bufSize
+      , hash = 0
+      , signals = toList $ toGenSignal <$> sigInfo
+      }
+
+  blackBoxMeta :: GenIlas -> BlackBoxMeta
   blackBoxMeta sizes =
     emptyBlackBoxMeta
       { bbKind = TDecl
@@ -125,7 +142,6 @@ signalInfoBBF _ _primitive args _ = Control.Lens.view tcCache >>= go
           ]
       }
 
-  -- We actually don't want to generate special HDL, so this will be black
   blackBox :: BlackBox
   blackBox = BBFunction (show 'renderHDLTF) 0 renderHDLTF
 {-# NOINLINE signalInfoBBF #-}
@@ -134,26 +150,27 @@ renderHDLTF :: (HasCallStack) => TemplateFunction
 renderHDLTF = TemplateFunction [] (const True) (\_ -> pure "")
 {-# NOINLINE renderHDLTF #-}
 
-renderJSONTF :: (HasCallStack) => Vec n (Int, String) -> TemplateFunction
+renderJSONTF :: (HasCallStack) => GenIlas -> TemplateFunction
 renderJSONTF args = TemplateFunction [] (const True) (renderJSON args)
 {-# NOINLINE renderJSONTF #-}
 
 renderJSON ::
-  forall s n.
+  forall s.
   ( HasCallStack
   , Backend s
   ) =>
-  Vec n (Int, String) ->
+  GenIlas ->
   BlackBoxContext ->
   State s (Doc ())
-renderJSON args _context = pure $ [__i|Sizes are: #{args}|]
+renderJSON args _context = pure $ [__i|#{encoded}|]
+ where
+  encoded = encode args
 {-# NOINLINE renderJSON #-}
 
 ilaConfig ::
   forall dom a n s.
   ( HiddenClockResetEnable dom
-  , -- , NamedSignal ts
-    KnownNat n
+  , KnownNat n
   , Lift a
   ) =>
   -- | How many samples should it capture of each signal?
@@ -166,9 +183,9 @@ ilaConfig ::
   (Vec s GenSignal, Signal dom a) ->
   -- | The ILA configuration itself
   IlaConfig n (Signal dom a)
-ilaConfig size triggerPoint toplevelName (genSignal, bundled) =
+ilaConfig size triggerPoint toplevel (genSignal, bundled) =
   IlaConfig
-    { hash = writeSignalInfo ((\s -> (s.width, s.name)) <$> genSignal)
+    { hash = writeSignalInfo toplevel size (fromGenSignal <$> genSignal)
     , size = size
     , triggerPoint = triggerPoint
     , tracing = bundled
@@ -195,6 +212,12 @@ data GenSignal = GenSignal
   , width :: Int
   }
   deriving (Generic, Show, ToJSON, Eq, Hashable)
+
+toGenSignal :: (Int, String) -> GenSignal
+toGenSignal (w, n) = GenSignal n w
+
+fromGenSignal :: GenSignal -> (Int, String)
+fromGenSignal s = (s.width, s.name)
 
 -- | Individual ILA JSON representation
 data GenIla = GenIla
