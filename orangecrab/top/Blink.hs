@@ -1,4 +1,7 @@
 {-# LANGUAGE TemplateHaskell #-}
+{-# LANGUAGE DuplicateRecordFields #-}
+{-# LANGUAGE OverloadedRecordDot #-}
+{-# LANGUAGE NoFieldSelectors #-}
 {-# OPTIONS_GHC -fconstraint-solver-iterations=10 #-}
 {-# OPTIONS_GHC -fplugin=Protocols.Plugin #-}
 
@@ -14,9 +17,9 @@ import Communication
 import ConfigGen
 import Domain
 import Ila
+import Packet
 import Pmod
 import Protocols
-import Packet
 
 -- | Resets the ILA trigger whenever we receive an incoming byte from UART
 triggerResetUart ::
@@ -68,17 +71,21 @@ topLogicUart baud btns rx = go
 
   Circuit main = circuit $ \(rxBit) -> do
     (rxByte, txBit) <- uartDf baud -< (txByte, rxBit)
-    -- triggerReset <- shouldReset <| deserializeToPacket -< rxByte
     packet <-
       ila
         ( ilaConfig
             d100
             20
             "name"
-            -- (ilaProbe (counter0, "c0") (counter1, "c1") (counter2, "c2") :: (Vec 3 GenSignal, Signal dom ((((), BitVector 10), BitVector 69), BitVector 9)))
-            (ilaProbe (counter0, "c0") (counter1, "c1") (counter2, "c2") ())
+            ( ilaProbe
+                (counter0, "c0")
+                (counter1, "c1")
+                (counter2, "c2")
+                ()
+            )
         )
-        (\(((_, a), _), _) -> a == 300)
+        ((==300) <$> counter0)
+        (pure True)
         -< rxByte
     txByte <- ps2df <| dropMeta -< packet
     idC -< txBit
