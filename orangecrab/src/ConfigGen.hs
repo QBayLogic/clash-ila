@@ -37,22 +37,20 @@ import Prelude qualified as P
 import Data.Data
 import Data.List
 
+{- | From a tuple consisting of a signal and a string, grab the bit width of the signal and put it
+in a vector. At the same time, bundle every signal together.
+
+This function is intended to be used in tangent with `ilaConfig`
+-}
 class LabelledSignals t n dom a where
   ilaProbe' :: (Vec n GenSignal, Signal dom a) -> t
 
+-- | Base case
 instance (KnownNat n, 1 <= n, m ~ n) => LabelledSignals (Vec m GenSignal, Signal dom a) n dom a where
   ilaProbe' :: (Vec n GenSignal, Signal dom a) -> (Vec n GenSignal, Signal dom a)
   ilaProbe' acc = acc
 
-instance
-  ( LabelledSignals final n dom s
-  , final ~ (Vec n GenSignal, Signal dom s)
-  ) =>
-  LabelledSignals (() -> final) n dom s
-  where
-  ilaProbe' :: (Vec n GenSignal, Signal dom s) -> () -> final
-  ilaProbe' acc _ = acc
-
+-- | Induction case
 instance
   ( LabelledSignals cont (n + 1) dom nextS
   , BitPack a
@@ -76,17 +74,50 @@ instance
      in
       ilaProbe' (newAcc, newSig)
 
+{- | Finalize the polyvariadic function
+This function needs to be here to make GHC properly be able to infer the type.
+You can use `ilaProbe` without it, but then you'd have to explicitly mark the result type, which
+is a big pain to do.
+-}
+instance
+  ( LabelledSignals final n dom s
+  , final ~ (Vec n GenSignal, Signal dom s)
+  ) =>
+  LabelledSignals (() -> final) n dom s
+  where
+  ilaProbe' :: (Vec n GenSignal, Signal dom s) -> () -> final
+  ilaProbe' acc _ = acc
+
+{- | A polyvariadic function containing 'labelled signals', aka, a list of tuples where the left
+side is an arbitary signal, and the right a string. The final entry should always be an empty
+tuple `()`. This is so GHC can properly infer the type. Omitting the empty tuple will require
+you to explicitly mark out the result type.
+
+The result of the function is intended to be forwarded to `IlaConfig`
+
+The result type is `(Vec n (Int, String), Signal dom a)`
+
+Example:
+
+>>> counter = register 0 $ counter + 1 :: Signal dom (Unsigned 8)
+>>> active = pure True :: Signal dom Bool
+>>> ilaProbe (counter, "8 bit value") (active "system active") ()
+-}
 ilaProbe :: forall dom t. (HiddenClockResetEnable dom, LabelledSignals t 0 dom ()) => t
 ilaProbe = ilaProbe' (Nil, pure () :: Signal dom ())
 
+-- | Write signal information to a file, using blackboxes
 writeSignalInfo ::
   forall dom n s.
   (HiddenClockResetEnable dom) =>
+  -- | Toplevel name
   String ->
+  -- | Buffer size
   SNat s ->
+  -- | A `Vec` of signal widths and their label
   Vec n (Int, String) ->
+  -- | The hash of the JSON
   BitVector 32
--- writeSignalInfo !_toplevel !_bufSize !_sigInfo = 0 :: BitVector 32
 writeSignalInfo !_toplevel !_bufSize !_sigInfo = 0 :: BitVector 32
 {-# OPAQUE writeSignalInfo #-}
 {-# ANN writeSignalInfo hasBlackBox #-}
@@ -107,8 +138,9 @@ writeSignalInfo !_toplevel !_bufSize !_sigInfo = 0 :: BitVector 32
   )
   #-}
 
+-- | The write signal blackbox function, grabs the AST from the context it gets invoked in
 signalInfoBBF :: (HasCallStack) => BlackBoxFunction
-signalInfoBBF _ _primitive args _ = Control.Lens.view tcCache >>= go
+signalInfoBBF _ _ args _ = Control.Lens.view tcCache >>= go
  where
   go tcm
     | [_, toplevel, _, sigInfo] <- lefts args
@@ -118,16 +150,28 @@ signalInfoBBF _ _primitive args _ = Control.Lens.view tcCache >>= go
         mkBlackBox $ GenIlas [getGenIla @n toplevel (SNat @s) (getSigInfo sigInfo)]
     | otherwise = errorX "Improper data given, expected Vec n (Int, String)"
 
-  mkBlackBox sizes = pure $ Right (blackBoxMeta sizes, blackBox)
+  -- \| Make the actual blackbox
+  mkBlackBox input = pure $ Right (blackBoxMeta input, blackBox)
 
-  coerceToType :: (TermLiteral a) => Term -> String -> a
+  -- \| Coerce a `Term` back into a type
+  -- Panics on failure
+  coerceToType ::
+    (TermLiteral a) =>
+    -- \| The AST of the type
+    Term ->
+    -- \| Error label, to be displayed if coercion fails
+    String ->
+    -- \| The result type
+    a
   coerceToType term err = case termToData term of
     Left _ -> errorX [__i|Cannot coerce term into an #{err}, cannot write ILA config|]
     Right v -> v
 
+  -- \| Get the signal information from it's AST form
   getSigInfo :: forall n. (KnownNat n) => Term -> Vec n (Int, String)
   getSigInfo term = coerceToType term "signal info"
 
+  -- \| Generate the ILA from the AST
   getGenIla ::
     forall n s. (KnownNat n, KnownNat s) => Term -> SNat s -> Vec n (Int, String) -> GenIla
   getGenIla toplevel bufSize sigInfo =
@@ -138,6 +182,8 @@ signalInfoBBF _ _primitive args _ = Control.Lens.view tcCache >>= go
       , signals = toList $ toGenSignal <$> sigInfo
       }
 
+  -- \| Meta information about the blackbox
+  -- We abuse the `bbIncludes` feature to write our ILA configuration to a JSON file
   blackBoxMeta :: GenIlas -> BlackBoxMeta
   blackBoxMeta sizes =
     emptyBlackBoxMeta
@@ -151,27 +197,36 @@ signalInfoBBF _ _primitive args _ = Control.Lens.view tcCache >>= go
           ]
       }
 
+  -- \| The blackbox itself, which we don't use as we only want to write to meta files
   blackBox :: BlackBox
   blackBox = BBFunction (show 'renderHDLTF) 0 renderHDLTF
 {-# NOINLINE signalInfoBBF #-}
 
+{- | Template function to generate HDL
+As we only want to write JSON, this is simply an empty string
+-}
 renderHDLTF :: (HasCallStack) => TemplateFunction
 renderHDLTF = TemplateFunction [] (const True) (\_ -> pure "")
 {-# NOINLINE renderHDLTF #-}
 
+-- | Template function to generate JSON
 renderJSONTF :: (HasCallStack) => GenIlas -> TemplateFunction
 renderJSONTF args = TemplateFunction [] (const True) (renderJSON args)
 {-# NOINLINE renderJSONTF #-}
 
+-- | Actually render JSON
 renderJSON ::
   forall s.
   ( HasCallStack
   , Backend s
   ) =>
+  -- | The Ilas to encode to JSON
   GenIlas ->
+  -- | Unused
   BlackBoxContext ->
+  -- | The output JSON content
   State s (Doc ())
-renderJSON args _context = pure $ [__i|#{encoded}|]
+renderJSON args _ = pure [__i|#{encoded}|]
  where
   encoded = encode args
 {-# NOINLINE renderJSON #-}
@@ -188,7 +243,8 @@ ilaConfig ::
   Index n ->
   -- | Merely an identifier, recommended to be the name of the toplevel design, but it can be any name you fancy
   String ->
-  -- | 
+  -- | A tuple containing a `Vec` of `GenSignals` and a bundled signal consisting out of every signal you want to monitor
+  -- You can generate this by using `ilaProbe`
   (Vec s GenSignal, Signal dom a) ->
   -- | The ILA configuration itself
   IlaConfig n (Signal dom a)
