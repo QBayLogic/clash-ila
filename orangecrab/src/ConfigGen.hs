@@ -179,7 +179,8 @@ signalInfoBBF _ _ args _ = Control.Lens.view tcCache >>= go
       { toplevel = coerceToType toplevel "toplevel name"
       , bufferSize = snatToNum bufSize
       , hash = 0
-      , signals = toList $ toGenSignal <$> sigInfo
+      -- The reverse is needed as the polyvariadic function builds up the vector in reverse order
+      , signals = P.reverse $ toList $ toGenSignal <$> sigInfo
       }
 
   -- \| Meta information about the blackbox
