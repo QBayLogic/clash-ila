@@ -45,6 +45,15 @@ instance (KnownNat n, 1 <= n, m ~ n) => LabelledSignals (Vec m GenSignal, Signal
   ilaProbe' acc = acc
 
 instance
+  ( LabelledSignals final n dom s
+  , final ~ (Vec n GenSignal, Signal dom s)
+  ) =>
+  LabelledSignals (() -> final) n dom s
+  where
+  ilaProbe' :: (Vec n GenSignal, Signal dom s) -> () -> final
+  ilaProbe' acc _ = acc
+
+instance
   ( LabelledSignals cont (n + 1) dom nextS
   , BitPack a
   , nextS ~ (s, a)
@@ -179,7 +188,7 @@ ilaConfig ::
   Index n ->
   -- | Merely an identifier, recommended to be the name of the toplevel design, but it can be any name you fancy
   String ->
-  -- | A list
+  -- | 
   (Vec s GenSignal, Signal dom a) ->
   -- | The ILA configuration itself
   IlaConfig n (Signal dom a)

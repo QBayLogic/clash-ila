@@ -75,7 +75,8 @@ topLogicUart baud btns rx = go
             d100
             20
             "name"
-            (ilaProbe (counter0, "c0") (counter1, "c1") (counter2, "c2") :: (Vec 3 GenSignal, Signal dom ((((), BitVector 10), BitVector 69), BitVector 9)))
+            -- (ilaProbe (counter0, "c0") (counter1, "c1") (counter2, "c2") :: (Vec 3 GenSignal, Signal dom ((((), BitVector 10), BitVector 69), BitVector 9)))
+            (ilaProbe (counter0, "c0") (counter1, "c1") (counter2, "c2") ())
         )
         (\(((_, a), _), _) -> a == 300)
         -< rxByte
