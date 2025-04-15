@@ -106,3 +106,34 @@ ps2df = Circuit exposeIn <| downConverterC @1
       ( ack2ps <$> backpressure
       , toDf <$> incoming
       )
+
+-- | Converts a `Df` into a `PacketStream`. The packet stream will be transactions of individual
+-- bytes, if you want it to bundle multiple bytes together, use `upConverterC`
+df2ps ::
+  forall dom.
+  ( HiddenClockResetEnable dom) =>
+  Circuit
+    (Df dom (BitVector 8))
+    (PacketStream dom 1 ())
+df2ps = Circuit exposeIn
+ where
+  exposeIn (incoming, backpressure) = out
+   where
+    ps2ack :: PacketStreamS2M -> Ack
+    ps2ack = Ack . _ready
+
+    toPs :: Df.Data (BitVector 8) -> Maybe (PacketStreamM2S 1 ())
+    toPs Df.NoData = Nothing
+    toPs (Df.Data byte) =
+      Just $
+        PacketStreamM2S
+          { _meta = ()
+          , _last = Just 1
+          , _abort = False
+          , _data = byte :> Nil
+          }
+
+    out =
+      ( ps2ack <$> backpressure
+      , toPs <$> incoming
+      )
