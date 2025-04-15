@@ -3,6 +3,7 @@ module Communication where
 import Clash.Cores.UART (ValidBaud, uart)
 import Clash.Prelude
 import Data.Maybe qualified as DM
+import Data.Type.Equality ((:~:) (Refl))
 import Protocols
 import Protocols.Df qualified as Df
 import Protocols.PacketStream
@@ -107,11 +108,12 @@ ps2df = Circuit exposeIn <| downConverterC @1
       , toDf <$> incoming
       )
 
--- | Converts a `Df` into a `PacketStream`. The packet stream will be transactions of individual
--- bytes, if you want it to bundle multiple bytes together, use `upConverterC`
+{- | Converts a `Df` into a `PacketStream`. The packet stream will be transactions of individual
+bytes, if you want it to bundle multiple bytes together, use `upConverterC`
+-}
 df2ps ::
   forall dom.
-  ( HiddenClockResetEnable dom) =>
+  (HiddenClockResetEnable dom) =>
   Circuit
     (Df dom (BitVector 8))
     (PacketStream dom 1 ())
@@ -136,4 +138,52 @@ df2ps = Circuit exposeIn
     out =
       ( ps2ack <$> backpressure
       , toPs <$> incoming
+      )
+
+{- | Given a stream of bytes, replace the `_last` with `Nothing`, every `n`th packet will have
+`Just 1` set. This is useful in combination with `upConverterC`
+-}
+mergeBytePackets ::
+  forall dom n a.
+  ( HiddenClockResetEnable dom
+  , KnownNat n
+  , 1 <= n
+  ) =>
+  -- | How many packets need to be bundled together
+  SNat n ->
+  Circuit
+    (PacketStream dom 1 a)
+    (PacketStream dom 1 a)
+mergeBytePackets _ = Circuit exposeIn
+ where
+  exposeIn (fwdIn, bwdIn) = out
+   where
+    counter :: Signal dom (Index n)
+    counter = register 0 $ mux (DM.isJust <$> fwdIn) (satAdd SatWrap 1 <$> counter) counter
+
+    replaceLast (Just packet) count
+      | count == natToNum @(n - 1) = Just packet{_last = Just 1}
+      | otherwise = Just packet{_last = Nothing}
+    replaceLast Nothing _ = Nothing
+
+    out = (bwdIn, liftA2 replaceLast fwdIn counter)
+
+-- | Converts a `Signal dom (Maybe a)` into a `Df dom a`. Since CSignals do not accept backpressure
+-- all backpressure will be ignored and is hence, unsafe.
+unsafeCSignalToDf ::
+  forall dom a.
+  (HiddenClockResetEnable dom) =>
+  Circuit
+    (CSignal dom (Maybe a))
+    (Df dom a)
+unsafeCSignalToDf = Circuit exposeIn
+ where
+  exposeIn (incoming, _) = out
+   where
+    toData Nothing = Df.NoData
+    toData (Just a) = Df.Data a
+
+    out =
+      ( pure ()
+      , toData <$> incoming
       )
