@@ -51,7 +51,7 @@ instance (KnownNat n, 1 <= n, m ~ n) => LabelledSignals (Vec m GenSignal, Signal
   ilaProbe' acc = acc
 
 -- | Induction case
-instance
+instance {-# OVERLAPPABLE #-}
   ( LabelledSignals cont (n + 1) dom nextS
   , BitPack a
   , nextS ~ (s, a)
@@ -74,19 +74,26 @@ instance
      in
       ilaProbe' (newAcc, newSig)
 
-{- | Finalize the polyvariadic function
-This function needs to be here to make GHC properly be able to infer the type.
-You can use `ilaProbe` without it, but then you'd have to explicitly mark the result type, which
-is a big pain to do.
--}
 instance
-  ( LabelledSignals final n dom s
-  , final ~ (Vec n GenSignal, Signal dom s)
+  ( LabelledSignals cont 1 dom a
+  , BitPack a
+  , nextS ~ a
   ) =>
-  LabelledSignals (() -> final) n dom s
+  LabelledSignals ((Signal dom a, String) -> cont) 0 dom s
   where
-  ilaProbe' :: (Vec n GenSignal, Signal dom s) -> () -> final
-  ilaProbe' acc _ = acc
+  ilaProbe' :: (Vec n GenSignal, Signal dom s) -> (Signal dom a, String) -> cont
+  ilaProbe' (Nil, _) (sig, label) = ilaProbe' (newAcc, newSig)
+    where
+      newAcc :: Vec 1 GenSignal
+      newAcc =
+        GenSignal
+          { name = label
+          , width = natToNum @(BitSize a)
+          }
+          :> Nil
+
+      newSig :: Signal dom nextS
+      newSig = bundle sig
 
 {- | A polyvariadic function containing 'labelled signals', aka, a list of tuples where the left
 side is an arbitary signal, and the right a string. The final entry should always be an empty
@@ -103,8 +110,8 @@ Example:
 >>> active = pure True :: Signal dom Bool
 >>> ilaProbe (counter, "8 bit value") (active "system active") ()
 -}
-ilaProbe :: forall dom t. (HiddenClockResetEnable dom, LabelledSignals t 0 dom ()) => t
-ilaProbe = ilaProbe' (Nil, pure () :: Signal dom ())
+ilaProbe :: forall dom t. (HiddenClockResetEnable dom, LabelledSignals t 0 dom a) => t
+ilaProbe first@(f, _) = ilaProbe' (Nil, f) first
 
 -- | Write signal information to a file, using blackboxes
 writeSignalInfo ::
