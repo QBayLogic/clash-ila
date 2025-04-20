@@ -1,3 +1,7 @@
+{-# LANGUAGE OverloadedRecordDot #-}
+{-# LANGUAGE DuplicateRecordFields #-}
+{-# LANGUAGE NoFieldSelectors #-}
+
 module RingBuffer where
 
 import Clash.Prelude
@@ -65,6 +69,40 @@ ringBuffer size ini clear writeData readIndex =
 
   ramWrite :: Signal dom (Maybe (Index size, a))
   ramWrite = liftA2 (\addr write -> (fmap (addr,) write)) (snd $ unbundle headTail) writeData
+
+-- | A component providing an `Wishbone` interface for reading out values from a `ringBuffer`.
+-- The address size is
+ringBufferReaderWb ::
+  forall dom size dat addrW.
+  ( HiddenClockResetEnable dom
+  , NFDataX dat
+  , BitPack dat
+  , KnownNat size
+  , KnownNat addrW
+  , 1 <= size
+  , 1 <= addrW
+  ) =>
+  -- | The buffer component
+  (Signal dom (Index size) -> (Signal dom dat, Signal dom (Index (size + 1)))) ->
+  Circuit
+    (Wishbone dom Standard addrW dat)
+    ()
+ringBufferReaderWb buffer = Circuit exposeIn
+ where
+  exposeIn (fwdM2S, _) = out
+   where
+    address = (\m2s -> if m2s.strobe then m2s.addr else minBound) <$> fwdM2S
+    output = fst . buffer $ unpack . resize <$> address
+
+    response m2s dat = WishboneS2M {
+        retry=False,
+        err=False,
+        acknowledge=m2s.strobe,
+        readData=dat,
+        stall=False
+      }
+
+    out = (liftA2 response fwdM2S output, ())
 
 {- | Reads out the entire buffer using the PacketStream protocol
 The data will be chopped up in bytes and sent one-by-one each clock cycle
