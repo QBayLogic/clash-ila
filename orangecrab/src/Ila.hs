@@ -17,6 +17,72 @@ import Data.Maybe as DM
 import Protocols
 import Protocols.PacketStream
 
+{- |
+# ILA memory mapped interface
+All values are assumed to be big endian, both in bit and byte endianness.
+
+## OFFSET 0x0000_0000 - Register Space
+
+All addresses on this offset are registers intended to control the ILA itself.
+
+### Addr 0x0000_0000 - ILA Control Registers
+
+`| 31..24 | 23..16 |  15..8 |  7..0  |`
+`| ______ | ______ |  ____  | Capt   |`
+
+
+- Capt: if the right most bit is set, the ILA is considered active and will monitor incoming
+signals
+
+### Addr 0x0000_0001 - ILA Trigger Registers
+
+`| 31..24 | 23..16 |  15..8 |  7..0  |`
+`| ______ | TrgOp  | TrgMsk | TrgRst |`
+
+
+- TrgRst: if the right most bit is set, it will clear the buffer and re-arm the trigger.
+- TrgMsk: if the right most bit is set, it will enable the `ILA Trigger Mask`
+-  TrgOp: these bits indicate how the ILA trigger should operate, possible values are:
+    - 0x0000 -> Use predefined trigger
+    - 0x0001 -> Trigger if the sample matches `ILA Compare Value`
+    - 0x0002 -> Trigger if the sample __DOES NOT__ match `ILA Compare Value`
+    - 0x0003 -> Trigger if the sample is less than specified in `ILA Compare Value`
+    - 0x0004 -> Trigger if the sample is less than or equal to specified in `ILA Compare Value`
+    - 0x0005 -> Trigger if the sample is more than specified in `ILA Compare Value`
+    - 0x0006 -> Trigger if the sample is more than or equal to specified in `ILA Compare Value`
+
+### Addr 0x0000_0002 - Trigger point
+
+`| 31..24 | 23..16 |  15..8 |  7..0  |`
+`| TrgPt3 | TrgPt2 | TrgPt1 | TrgPt0 |`
+
+- TrgPt: an 32 bit unsigned value, indicating how many samples it should capture *post* trigger.
+A value of 0 would include everything up until the trigger itself, a value bigger or equal to 
+the size of the buffer would cause the system to never trigger.
+
+## OFFSET 0x1000_0000 - ILA Trigger Mask
+
+This mask is applied before data is given to the trigger, this can be used to ignore certain bits
+in the trigger. The mask starts at address 0x0000_0000 and is valid for the next x amount of bits,
+where x is the bit length of the combined signals being monitored.
+
+## OFFSET 0x2000_0000 - ILA Compare Value
+
+Depending on `TrgOp`, this value gets used to compare the incoming samples against. The value starts
+at address 0x0000_0000 and is valid for the next x amount of bits, where x is the bit length of the
+combined signals being monitored.
+
+## OFFSET 0x3000_0000 - ILA Buffer
+
+Reading values with this offset will return data captured in the buffer at the address, subtracted
+by the address offset. So reading from `0x3000_0000` will return the first sample in the buffer.
+`0x3000_0001` will return the second sample, etc.
+
+-}
+
+
+
+
 {- | The buffer of the ila, with signals to control wether or not the signals get captured
 
 This function exposes the barebones of the ILA capturing logic and it will only accept boolean
