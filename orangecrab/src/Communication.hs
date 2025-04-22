@@ -223,7 +223,7 @@ etherboneDfPacketizer ::
     (Df dom (BitVector 8))
     (PacketStream dom 4 ())
 -- etherboneDfPacketizer = upConverterC @2 @2 <| Circuit exposeIn <| Df.compressor Nothing toWord
-etherboneDfPacketizer = upConverterC @2 @2 <| Circuit exposeIn <| Df.compressor Nothing toWord
+etherboneDfPacketizer = upConverterC @2 @2 <| Circuit exposeIn <| Df.compressor Nothing toWord <| Df.fifo d32
  where
   toWord ::
     (Maybe (BitVector 8)) -> BitVector 8 -> (Maybe (BitVector 8), Maybe (Vec 2 (BitVector 8)))
@@ -236,21 +236,13 @@ etherboneDfPacketizer = upConverterC @2 @2 <| Circuit exposeIn <| Df.compressor 
     --
     -- We *2 is done due to us assuming we're using 32 bit etherbone, so each address/value is
     -- 32 bits. Each field is 16 bits.
-    --
-    -- We should add +1, as there are 16 bits taken
     getLength :: Vec 2 (BitVector 8) -> Index 514
     getLength word = case word of
       (0 :> 0 :> Nil) -> 0
-      (wCount :> 0 :> Nil) -> unpack $ resize wCount + 1
-      (0 :> rCount :> Nil) -> unpack $ resize rCount + 1
+      (wCount :> 0 :> Nil) -> unpack $ resize wCount
+      (0 :> rCount :> Nil) -> unpack $ resize rCount
       (wCount :> rCount :> Nil) -> (unpack $ resize rCount) + (unpack $ resize wCount) + 1
       _ -> 0 -- Haskell is stupid
-
-    -- W 3 (1 * 2 - 1)
-    -- W 2
-    -- W 1
-    -- W 0
-    -- END
 
     -- | Create the PS packet without `_last`
     partialPs word =
