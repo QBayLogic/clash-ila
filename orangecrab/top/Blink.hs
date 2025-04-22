@@ -1,6 +1,6 @@
-{-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE DuplicateRecordFields #-}
 {-# LANGUAGE OverloadedRecordDot #-}
+{-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE NoFieldSelectors #-}
 {-# OPTIONS_GHC -fconstraint-solver-iterations=10 #-}
 {-# OPTIONS_GHC -fplugin=Protocols.Plugin #-}
@@ -20,6 +20,63 @@ import Ila
 import Packet
 import Pmod
 import Protocols
+
+import Clash.Cores.Etherbone
+import Protocols.Df qualified as Df
+import Protocols.PacketStream
+import Protocols.Wishbone
+import Prelude qualified as P
+import Debug.Trace
+import Data.String.Interpolate (__i)
+
+demoWishbone ::
+  forall dom addrW dat datBytes.
+  ( HiddenClockResetEnable dom
+  , addrW ~ 32
+  , dat ~ BitVector 32
+  , datBytes ~ BitSize dat `DivRU` 8
+  ) =>
+  Circuit
+    (Wishbone dom Standard addrW dat)
+    (CSignal dom Bool)
+demoWishbone = Circuit exposeIn
+ where
+  exposeIn (fwd, _) = out
+   where
+    new0 :: Signal dom (Maybe dat)
+    new0 = writeReq 1 <$> fwd
+    new1 :: Signal dom (Maybe dat)
+    new1 = writeReq 2 <$> fwd
+
+    addr0 :: Signal dom dat
+    addr0 = register 0 $ liftA2 DM.fromMaybe addr0 new0
+    addr1 :: Signal dom dat
+    addr1 = register 0 $ liftA2 DM.fromMaybe addr1 new1
+
+    writeReq :: BitVector addrW -> WishboneM2S addrW datBytes dat -> Maybe dat
+    writeReq addr packet
+      | packet.strobe && packet.writeEnable && packet.addr == addr = Just packet.writeData
+      | otherwise = Nothing
+
+    readData :: WishboneM2S addrW datBytes dat -> dat -> dat -> dat
+    readData packet a0 a1
+      | packet.addr == 1 = a0
+      | packet.addr == 2 = a1
+      | otherwise = minBound
+
+    process :: WishboneM2S addrW datBytes dat -> dat -> WishboneS2M dat
+    process m2s rd =
+      WishboneS2M
+        { retry = False
+        , stall = False
+        , acknowledge = m2s.strobe
+        , readData = rd
+        , err = False
+        }
+
+    led = register False $ led .||. strobe <$> fwd
+
+    out = (liftA2 process fwd $ liftA3 readData fwd addr0 addr1, led)
 
 -- | Resets the ILA trigger whenever we receive an incoming byte from UART
 triggerResetUart ::
@@ -57,8 +114,11 @@ topLogicUart ::
   Signal dom (BitVector 4) ->
   -- | RX
   Signal dom Bit ->
-  -- | TX
-  Signal dom Bit
+  -- | Leds
+  ( Signal dom Pmod8LD
+  , -- \| TX
+    Signal dom Bit
+  )
 topLogicUart baud btns rx = go
  where
   -- Simple demo signal to 'debug'
@@ -69,28 +129,44 @@ topLogicUart baud btns rx = go
   counter2 :: (HiddenClockResetEnable dom) => Signal dom (Signed 10)
   counter2 = register 40 $ satAdd SatWrap 1 <$> counter2
 
-  Circuit main = circuit $ \(rxBit) -> do
+  Circuit demoWish = circuit $ \rxBit -> do
     (rxByte, txBit) <- uartDf baud -< (txByte, rxBit)
-    packet <-
-      ila
-        ( ilaConfig
-            d100
-            20
-            "name"
-            ( ilaProbe
-                (counter0, "c0")
-                (counter1, "c1")
-                (counter2, "c2")
-                ()
-            )
-        )
-        ((==300) <$> counter0)
-        (pure True)
-        -< rxByte
-    txByte <- ps2df <| dropMeta -< packet
-    idC -< txBit
+    rxPs <- etherboneDfPacketizer <| holdUntilAck -< rxByte
+    txByte <- ps2df -< txPs
 
-  go = snd $ main (rx, pure ())
+    (txPs, wbMaster) <- etherboneC 0 (pure Nil) -< rxPs
+    led <- demoWishbone -< wbMaster
+
+    idC -< (txBit, led)
+
+  -- Circuit main = circuit $ \(rxBit) -> do
+  --   (rxByte, txBit) <- uartDf baud -< (txByte, rxBit)
+  --   packet <-
+  --     ila
+  --       ( ilaConfig
+  --           d100
+  --           20
+  --           "name"
+  --           ( ilaProbe
+  --               (counter0, "c0")
+  --               (counter1, "c1")
+  --               (counter2, "c2")
+  --               ()
+  --           )
+  --       )
+  --       ((== 300) <$> counter0)
+  --       (pure True)
+  --       -< rxByte
+  --   txByte <- ps2df <| dropMeta -< packet
+  --   idC -< txBit
+
+  -- go = snd $ main (rx, pure ())
+  (txBit, isOn) = snd $ demoWish (rx, (pure (), pure ()))
+
+  leds :: Signal dom Pmod8LD
+  leds = (\v -> unpack . pack $ replicate d8 v) <$> isOn
+
+  go = (leds, txBit)
 
 -- | The top entity
 topEntity ::
@@ -98,7 +174,9 @@ topEntity ::
   "BTN" ::: Reset Dom48 ->
   "PMOD3" ::: Signal Dom48 PmodBTN ->
   "PMOD1_6" ::: Signal Dom48 Bit ->
-  "PMOD1_5" ::: Signal Dom48 Bit
+  ( "PMOD2" ::: Signal Dom48 Pmod8LD
+  , "PMOD1_5" ::: Signal Dom48 Bit
+  )
 topEntity clk rst btn = withClockResetEnable clk rst enableGen (topLogicUart (SNat @9600) (pack <$> btn))
 
 makeTopEntity 'topEntity

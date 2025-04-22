@@ -1,13 +1,17 @@
 use std::io::{Read, Write};
 use std::path::PathBuf;
+use std::time::Duration;
 
 use clap::{Args, Parser, Subcommand};
 use serialport::SerialPort;
+use wishbone::WbTransaction;
 
 mod config;
 mod packet;
-mod vcd;
+mod trigger;
 mod tui;
+mod vcd;
+mod wishbone;
 
 #[derive(Parser, Debug)]
 #[command(version, about)]
@@ -142,13 +146,14 @@ impl ParseSubcommand for MonitorArgs {
 impl ParseSubcommand for TuiArgs {
     fn parse(self) {
         let rx_port = find_specified_port(&self.port, self.baud);
-        let mut tx_port = rx_port.try_clone()
-            .expect("Couldn't open port for writing");
+        let mut tx_port = rx_port.try_clone().expect("Couldn't open port for writing");
         let configs = config::read_config(&self.config)
             .expect(&format!("File at {:?} contained errors", &self.config));
         let config = configs.ilas[0].clone();
 
-        let Ok(mut session) = tui::TuiSession::new(&config) else { return };
+        let Ok(mut session) = tui::TuiSession::new(&config) else {
+            return;
+        };
 
         let rx = packet::packet_loop(rx_port.bytes(), config.clone());
         tx_port.write(&[1, 2, 3, 4, 5, 6]);
@@ -262,22 +267,73 @@ fn vcd_dump(port: Box<dyn SerialPort>, args: VcdArgs) {
 }
 
 fn main() {
-    let cli = Cli::parse();
+    let mut port = serialport::new("/dev/ttyUSB1", 9600)
+        .timeout(Duration::from_secs(1))
+        .open()
+        .expect("Can't open port");
 
-    match cli.command {
-        Subcommands::Vcd(args) => args.parse(),
-        Subcommands::Analysis(args) => args.parse(),
-        Subcommands::Monitor(args) => args.parse(),
-        Subcommands::Tui(args) => args.parse(),
-        Subcommands::List => {
-            let ports =
-                serialport::available_ports().expect("Unable to iterate serial devices. Exiting.");
+    fn read_regs(port: &mut Box<dyn SerialPort>) {
+        let read = WbTransaction {
+            byte_select: [true; 4],
+            reads: vec![1, 2],
+            read_addr: 0x0000_0000,
+            writes: vec![],
+            write_addr: 0x0000_0000,
+        };
+        let records = read.to_records();
+        for record in records {
+            let tx_bytes = record.packetize();
+            let mut rx_bytes = vec![0; tx_bytes.len()];
 
-            println!("Available ports:");
-            for port in ports {
-                println!("\t{}", port.port_name);
-            }
-            return;
+            port.write_all(&tx_bytes).and(port.flush())
+                .expect("Failed to write bytes");
+            port.read_exact(rx_bytes.as_mut_slice())
+                .expect("Didn't get response in time");
+            println!("Registers contain: {rx_bytes:02x?}");
         }
     }
+    fn write_reg(port: &mut Box<dyn SerialPort>, reg: u32, v: u32) {
+        let read = WbTransaction {
+            byte_select: [true; 4],
+            reads: vec![],
+            read_addr: 0x0000_0000,
+            writes: vec![v],
+            write_addr: reg,
+        };
+        let records = read.to_records();
+        for record in records {
+            let tx_bytes = record.packetize();
+            let mut rx_bytes = vec![0; tx_bytes.len()];
+
+            port.write_all(&tx_bytes).and(port.flush())
+                .expect("Failed to write bytes");
+            port.read_exact(rx_bytes.as_mut_slice())
+                .expect("Didn't get response in time");
+            println!("Write response: {rx_bytes:02x?}");
+        }
+    }
+
+    read_regs(&mut port);
+    write_reg(&mut port, 1, 20);
+    write_reg(&mut port, 2, 08);
+    read_regs(&mut port);
+
+    //let cli = Cli::parse();
+    //
+    //match cli.command {
+    //    Subcommands::Vcd(args) => args.parse(),
+    //    Subcommands::Analysis(args) => args.parse(),
+    //    Subcommands::Monitor(args) => args.parse(),
+    //    Subcommands::Tui(args) => args.parse(),
+    //    Subcommands::List => {
+    //        let ports =
+    //            serialport::available_ports().expect("Unable to iterate serial devices. Exiting.");
+    //
+    //        println!("Available ports:");
+    //        for port in ports {
+    //            println!("\t{}", port.port_name);
+    //        }
+    //        return;
+    //    }
+    //}
 }
