@@ -64,6 +64,7 @@ impl MemoryMappedWb for WbRead {
 /// This does not need to follow any specific rules, it will be validated and split into
 /// `EBRecord`s.
 pub struct WbTransaction {
+    pub byte_select: [bool; 4],
     pub read_addr: u32,
     pub reads: Vec<u32>,
     pub write_addr: u32,
@@ -74,6 +75,7 @@ pub struct WbTransaction {
 /// include the wishbone flags. This only contains the read/write operations and ensures it does
 /// not exceed 255.
 pub struct EBRecord {
+    byte_select: u8,
     read_addr: u32,
     reads: Vec<u32>,
     write_addr: u32,
@@ -102,6 +104,10 @@ impl WbTransaction {
             }
 
             out.push(EBRecord {
+                byte_select: self
+                    .byte_select
+                    .iter()
+                    .fold(0, |acc, bit| (acc << 1) | *bit as u8),
                 reads: rd_this.to_vec(),
                 writes: wr_this.to_vec(),
                 read_addr: self.read_addr,
@@ -111,5 +117,47 @@ impl WbTransaction {
             self.reads = rd_keep.to_vec();
             self.writes = wr_keep.to_vec();
         }
+    }
+}
+
+impl EBRecord {
+    pub fn packetize(&self) -> Vec<u8> {
+        // Why does .concat have to return a Vec? why is there no const concat method for if the
+        // sub elements are also const? Annoying.
+
+        const EB_MAGIC: u16 = 0x4e6f;
+
+        let eb_header = [
+            EB_MAGIC.to_be_bytes(),
+            [0x10, 0x44], // Version 1, addr/port size 32 bit
+        ]
+        .concat();
+        let record_header = [
+            [0x00, self.byte_select], // No flags, byte select
+            [self.writes.len() as u8, self.reads.len() as u8],
+        ]
+        .concat();
+
+        let mut packet = vec![eb_header, record_header];
+        if self.writes.len() > 0 {
+            packet.push(self.write_addr.to_be_bytes().to_vec());
+            packet.push(
+                self.writes
+                    .iter()
+                    .flat_map(|n| n.to_be_bytes().to_vec())
+                    .collect(),
+            );
+        }
+        if self.reads.len() > 0 {
+            packet.push(self.read_addr.to_be_bytes().to_vec());
+            packet.push(
+                self.reads
+                    .iter()
+                    .flat_map(|n| n.to_be_bytes().to_vec())
+                    .collect(),
+            );
+        }
+
+        packet.concat()
     }
 }
