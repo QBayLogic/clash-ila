@@ -85,7 +85,7 @@ pub struct EBRecord {
 impl WbTransaction {
     /// Converts a Wishbone transaction into `EBRecord`s, those records can then be framed by an
     /// EBHeader and be sent over any medium with etherbone.
-    pub fn to_record(mut self) -> Vec<EBRecord> {
+    pub fn to_records(mut self) -> Vec<EBRecord> {
         const ETHERBONE_MAX_ENTRIES: usize = 255;
 
         let mut out = vec![];
