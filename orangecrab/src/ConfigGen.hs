@@ -46,7 +46,7 @@ class LabelledSignals t n dom a where
   ilaProbe' :: (Vec n GenSignal, Signal dom a) -> t
 
 -- | Base case
-instance (KnownNat n, 1 <= n, m ~ n) => LabelledSignals (Vec m GenSignal, Signal dom a) n dom a where
+instance (KnownNat n, m ~ n) => LabelledSignals (Vec m GenSignal, Signal dom a) n dom a where
   ilaProbe' :: (Vec n GenSignal, Signal dom a) -> (Vec n GenSignal, Signal dom a)
   ilaProbe' acc = acc
 
