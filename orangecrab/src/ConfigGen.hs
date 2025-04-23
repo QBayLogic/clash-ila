@@ -46,7 +46,7 @@ class LabelledSignals t n dom a where
   ilaProbe' :: (Vec n GenSignal, Signal dom a) -> t
 
 -- | Base case
-instance (KnownNat n, m ~ n) => LabelledSignals (Vec m GenSignal, Signal dom a) n dom a where
+instance (KnownNat n, m ~ n, a ~ s) => LabelledSignals (Vec m GenSignal, Signal dom s) n dom a where
   ilaProbe' :: (Vec n GenSignal, Signal dom a) -> (Vec n GenSignal, Signal dom a)
   ilaProbe' acc = acc
 
@@ -82,7 +82,7 @@ instance
   LabelledSignals ((Signal dom a, String) -> cont) 0 dom s
   where
   ilaProbe' :: (Vec n GenSignal, Signal dom s) -> (Signal dom a, String) -> cont
-  ilaProbe' (Nil, _) (sig, label) = ilaProbe' (newAcc, newSig)
+  ilaProbe' (Nil, _) (sig, label) = ilaProbe' (newAcc, sig)
     where
       newAcc :: Vec 1 GenSignal
       newAcc =
@@ -91,9 +91,6 @@ instance
           , width = natToNum @(BitSize a)
           }
           :> Nil
-
-      newSig :: Signal dom nextS
-      newSig = sig
 
 {- | A polyvariadic function containing 'labelled signals', aka, a list of tuples where the left
 side is an arbitary signal, and the right a string. The final entry should always be an empty
@@ -111,6 +108,7 @@ Example:
 >>> ilaProbe (counter, "8 bit value") (active "system active") ()
 -}
 -- ilaProbe :: forall dom t a. (HiddenClockResetEnable dom, LabelledSignals t 0 dom a) => t
+ilaProbe :: LabelledSignals ((Signal dom a, b) -> t) 0 dom a => (Signal dom a, b) -> t
 ilaProbe first@(f, _) = ilaProbe' (Nil, f) first
 
 -- | Write signal information to a file, using blackboxes
