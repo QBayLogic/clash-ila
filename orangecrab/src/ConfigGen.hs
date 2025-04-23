@@ -110,7 +110,7 @@ Example:
 >>> active = pure True :: Signal dom Bool
 >>> ilaProbe (counter, "8 bit value") (active "system active") ()
 -}
-ilaProbe :: forall dom t a. (HiddenClockResetEnable dom, LabelledSignals t 0 dom a) => t
+-- ilaProbe :: forall dom t a. (HiddenClockResetEnable dom, LabelledSignals t 0 dom a) => t
 ilaProbe first@(f, _) = ilaProbe' (Nil, f) first
 
 -- | Write signal information to a file, using blackboxes
