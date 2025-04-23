@@ -58,11 +58,22 @@ common common-options
     base,
     hedgehog >= 1.0.3 && < 1.6,
     split,
+    template-haskell,
+    aeson,
+    th-abstraction,
+    th-expand-syns,
+    hashable,
     clash-cores,
     clash-lib,
     clash-prelude,
     clash-prelude-hedgehog,
     clash-protocols,
+    string-interpolate,
+    prettyprinter,
+    mtl,
+    lens,
+    pretty-show,
+    constraints,
     ghc-typelits-natnormalise,
     ghc-typelits-extra,
     ghc-typelits-knownnat
@@ -75,9 +86,10 @@ library
     Pmod
     RGB
     RingBuffer
-    Probes
+    Ila
     Communication
     Packet
+    ConfigGen
 
 test-suite unittests
   import: common-options
@@ -87,6 +99,7 @@ test-suite unittests
   other-modules:
     Tests.RingBuffer
     Tests.Packet
+    Tests.Communication
   build-depends:
     orangecrab
 
