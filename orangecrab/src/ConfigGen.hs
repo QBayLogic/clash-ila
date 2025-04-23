@@ -93,7 +93,7 @@ instance
           :> Nil
 
       newSig :: Signal dom nextS
-      newSig = bundle sig
+      newSig = sig
 
 {- | A polyvariadic function containing 'labelled signals', aka, a list of tuples where the left
 side is an arbitary signal, and the right a string. The final entry should always be an empty
