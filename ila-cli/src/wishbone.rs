@@ -1,3 +1,5 @@
+use std::io::{Read, Write, Result as IoResult};
+
 use crate::trigger::TriggerOp;
 
 /// The different writing operations available for the ILA
@@ -35,6 +37,8 @@ pub enum WbRead {
 pub trait MemoryMappedWb {
     /// Returns at which address should this transaction operate on
     fn get_address(&self) -> (u32, [bool; 4]);
+
+    fn to_wb_transaction(&self) -> WbTransaction;
 }
 
 impl MemoryMappedWb for WbWrite {
@@ -49,12 +53,64 @@ impl MemoryMappedWb for WbWrite {
             WbWrite::Compare(_) => (0x2000_0000, [true; 4]),
         }
     }
+
+    fn to_wb_transaction(&self) -> WbTransaction {
+        let (write_addr, byte_select) = self.get_address();
+        match self {
+            WbWrite::Capture(capture) => {
+                WbTransaction::new_writes(byte_select, write_addr, vec![*capture as u32])
+            }
+            WbWrite::TriggerReset => WbTransaction::new_writes(byte_select, write_addr, vec![1]),
+            WbWrite::EnableMask(enable) => {
+                WbTransaction::new_writes(byte_select, write_addr, vec![(*enable as u32) << 8])
+            }
+            WbWrite::TriggerOp(trigger_op) => WbTransaction::new_writes(
+                byte_select,
+                write_addr,
+                vec![(trigger_op.to_u8() as u32) << 16],
+            ),
+            WbWrite::TriggerPoint(trig_point) => {
+                WbTransaction::new_writes(byte_select, write_addr, vec![*trig_point])
+            }
+            WbWrite::Mask(items) => {
+                let words: Vec<u32> = items
+                    .chunks(4)
+                    .map(|chunk| {
+                        chunk
+                            .iter()
+                            .fold(0, |acc, byte| (acc << 8) | (*byte as u32))
+                    })
+                    .collect();
+                WbTransaction::new_writes(byte_select, write_addr, words)
+            }
+            WbWrite::Compare(items) => {
+                let words: Vec<u32> = items
+                    .chunks(4)
+                    .map(|chunk| {
+                        chunk
+                            .iter()
+                            .fold(0, |acc, byte| (acc << 8) | (*byte as u32))
+                    })
+                    .collect();
+                WbTransaction::new_writes(byte_select, write_addr, words)
+            }
+        }
+    }
 }
 
 impl MemoryMappedWb for WbRead {
     fn get_address(&self) -> (u32, [bool; 4]) {
         match self {
             WbRead::Buffer(_) => (0x3000_0000, [true; 4]),
+        }
+    }
+
+    fn to_wb_transaction(&self) -> WbTransaction {
+        let (read_addr, byte_select) = self.get_address();
+        match self {
+            WbRead::Buffer(items) => {
+                WbTransaction::new_reads(byte_select, read_addr, items.clone())
+            }
         }
     }
 }
@@ -83,6 +139,25 @@ pub struct EBRecord {
 }
 
 impl WbTransaction {
+    pub fn new_reads(byte_select: [bool; 4], read_addr: u32, reads: Vec<u32>) -> Self {
+        WbTransaction {
+            byte_select,
+            read_addr,
+            reads,
+            write_addr: 0,
+            writes: vec![],
+        }
+    }
+    pub fn new_writes(byte_select: [bool; 4], write_addr: u32, writes: Vec<u32>) -> Self {
+        WbTransaction {
+            byte_select,
+            read_addr: 0,
+            reads: vec![],
+            write_addr,
+            writes,
+        }
+    }
+
     /// Converts a Wishbone transaction into `EBRecord`s, those records can then be framed by an
     /// EBHeader and be sent over any medium with etherbone.
     pub fn to_records(mut self) -> Vec<EBRecord> {
@@ -159,5 +234,23 @@ impl EBRecord {
         }
 
         packet.concat()
+    }
+
+    pub fn perform<T>(&self, medium: &mut T) -> IoResult<Vec<u32>>
+    where
+        T: Read + Write,
+    {
+        let mut bytes = self.packetize();
+        medium.write_all(&bytes)?;
+        medium.read_exact(&mut bytes)?;
+
+        let words = bytes.chunks(4)
+            .map(|chunk| chunk.
+                iter()
+                .fold(0, |acc, byte| (acc << 8) | (*byte as u32))
+            )
+            .collect();
+
+        Ok(words)
     }
 }

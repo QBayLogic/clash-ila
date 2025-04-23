@@ -44,6 +44,20 @@ impl Default for TriggerOp {
     }
 }
 
+impl TriggerOp {
+    pub fn to_u8(&self) -> u8 {
+        match self {
+            TriggerOp::Predefined => 0x00,
+            TriggerOp::Eq => 0x01,
+            TriggerOp::NEq => 0x02,
+            TriggerOp::Gt => 0x03,
+            TriggerOp::Gte => 0x04,
+            TriggerOp::Lt => 0x05,
+            TriggerOp::Lte => 0x06,
+        }
+    }
+}
+
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct TriggerConf {
     point: u32,
