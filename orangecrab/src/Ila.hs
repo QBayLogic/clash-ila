@@ -115,7 +115,7 @@ ilaCore size capture i freeze bufClear = buffer
       size
       undefined
       bufClear
-      (mux (freeze .&&. capture) (Just <$> i) (pure Nothing))
+      (mux (not <$> freeze .&&. capture) (Just <$> i) (pure Nothing))
 
 {- | The trigger handler of the ILA
 
@@ -164,7 +164,7 @@ triggerController config predicate core = Circuit exposeIn
 
     injectId oldMeta = (config.hash, oldMeta)
 
-    buffer = core config.tracing shouldSample triggerRst
+    buffer = core config.tracing (not <$> shouldSample) triggerRst
     Circuit packet = dataPacket <| mapMeta injectId <| ringBufferReaderPS buffer
 
     out = ((pure (), pure ()), snd $ packet (triggered, backpressure))
