@@ -90,6 +90,7 @@ library
     Communication
     Packet
     ConfigGen
+    WishboneUtils
 
 test-suite unittests
   import: common-options
