@@ -117,6 +117,69 @@ ilaCore size capture i freeze bufClear = buffer
       bufClear
       (mux (not <$> freeze .&&. capture) (Just <$> i) (pure Nothing))
 
+{- | Get a specific word of `a`, which may be several words wide
+The width of `word` is defined by the user of the function
+-}
+getWord ::
+  forall word input n.
+  ( BitPack input
+  , KnownNat word
+  , KnownNat n
+  , n ~ BitSize input `DivRU` word
+  ) =>
+  -- | The input
+  input ->
+  -- | The index of the word we want
+  Index n ->
+  -- | The output word
+  BitVector word
+getWord a i = (unpack . resize $ pack a :: Vec n (BitVector word)) !! i
+
+-- | Retrieves a specific word from the ILA buffer. It will only listen to addresses within the
+-- range of 0x3000_0000 and 0x3fff_ffff. Each address refers to a specific word (=32 bits) in the
+-- buffer.
+--
+-- Samples may not precisely equal 32 bits. They may be smaller or bigger than 32 bits. However, in
+-- this function each sample is assigned one or more addresses for each word it's width takes up.
+-- So a 10 bit sample will only take up one address, and a 50 bit one would take up 2 addresses.
+-- Different samples never share the same memory space.
+--
+-- The memory remains consecutive
+ilaBufferManager ::
+  forall dom depth a addrW.
+  ( HiddenClockResetEnable dom
+  , BitPack a
+  , KnownNat depth
+  , KnownNat addrW
+  , 1 <= BitSize a `DivRU` 32
+  , 1 <= depth
+  ) =>
+  -- | The ILA buffer
+  (Signal dom (Index depth) -> (Signal dom a, Signal dom (Index (depth + 1)))) ->
+  -- | The incoming Wishbone M2S signal
+  Signal dom (WishboneM2S addrW 4 (BitVector 32)) ->
+  -- | The specific word associated with the requested address, if the current cycle is a read cycle
+  -- it will return `0` instead.
+  Signal dom (BitVector 32)
+ilaBufferManager buffer incoming = bufferData
+ where
+  -- \| Returns the index and word index of the current address provided
+  getBufferIndex ::
+    WishboneM2S addrW 4 (BitVector 32) -> (Index depth, Index (BitSize a `DivRU` 32))
+  getBufferIndex m2s =
+    let
+      (bIndex, wIndex) = (m2s.addr - 0x3000_0000) `divMod` (natToNum @(BitSize a `DivRU` 32))
+     in
+      (unpack $ resize bIndex, unpack $ resize wIndex)
+  (bufferIndex, wordIndex) = unbundle $ getBufferIndex <$> incoming
+
+  -- \| If in a read cycle, it will contain the output of the buffer, otherwise it will return 0
+  bufferData =
+    mux
+      (not . writeEnable <$> incoming .&&. compareAddrRange 0x3000_0000 0x3fff_ffff incoming)
+      (liftA2 (getWord @32) (fst $ buffer bufferIndex) wordIndex)
+      (pure 0)
+
 {- | The trigger handler of the ILA
 
 Given a predicate, it will test it against incoming samples and tell the buffer to stop sampling
