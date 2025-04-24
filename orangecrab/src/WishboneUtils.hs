@@ -16,9 +16,10 @@ inWbCycle ::
   Signal dom Bool
 inWbCycle m2s = strobe <$> m2s .&&. busCycle <$> m2s
 
--- | Check if the current wishbone cycle has a specific address and byte select
---
--- NOTE: only returns true in a valid WB cycle!
+{- | Check if the current wishbone cycle has a specific address and byte select
+
+NOTE: only returns true in a valid WB cycle!
+-}
 compareAddr ::
   forall dom addrW selW dat.
   ( KnownNat addrW
@@ -36,9 +37,10 @@ compareAddr addr byteSel m2s =
   (\fwd -> fwd.addr == addr && fwd.busSelect == byteSel)
     <$> m2s .&&. inWbCycle m2s
 
--- | Check if the current wishbone cycle falls within a specific address range. Ignoring byte select
---
--- NOTE: only returns true in a valid WB cycle!
+{- | Check if the current wishbone cycle falls within a specific address range. Ignoring byte select
+
+NOTE: only returns true in a valid WB cycle!
+-}
 compareAddrRange ::
   forall dom addrW selW dat.
   ( KnownNat addrW
@@ -76,3 +78,22 @@ addrMux ::
   Signal dom item
 addrMux addr byteSel true false m2s = mux (compareAddr addr byteSel m2s) true false
 
+-- | The same as `addrMux` with the added requirement that the WB request has to be a write cycle
+addrMuxWO ::
+  forall dom addrW selW dat item.
+  ( KnownNat addrW
+  , KnownNat selW
+  ) =>
+  -- | Address to compare against
+  BitVector addrW ->
+  -- | Byte select to compare against
+  BitVector selW ->
+  -- | The output if the current cycle matches the address
+  Signal dom item ->
+  -- | The output if the current cycle has a different address from the provided one
+  Signal dom item ->
+  -- | The M2S signal
+  Signal dom (WishboneM2S addrW selW dat) ->
+  -- | The actual output
+  Signal dom item
+addrMuxWO addr byteSel true false m2s = mux (compareAddr addr byteSel m2s .&&. writeEnable <$> m2s) true false
