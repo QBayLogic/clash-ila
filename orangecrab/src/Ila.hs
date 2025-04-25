@@ -116,6 +116,134 @@ ilaBufferManager buffer incoming = bufferData
       (liftA2 (getWord @32) (fst $ buffer bufferIndex) wordIndex)
       (pure 0)
 
+{- | ILA Wishbone interface
+
+This circuit can be used to instantiate and configure an ILA using a wishbone interface. Changing
+ILA behaviour is done by writing to specific addresses and selecting the right bytes using busSelect.
+
+A few useful registers are:
+|   Address   | Bus Select |      Description      | Operation |
+|-------------|------------|-----------------------|-----------|
+| 0x0000_0000 | 0b0001     | Capture               | WriteOnly |
+| 0x0000_0000 | 0b0010     | Trigger reset         | WriteOnly |
+| 0x0000_0000 | 0b0100     | Trigger operation     | WriteOnly |
+| 0x0000_0001 | 0b1111     | Trigger point         | WriteOnly |
+| 0x3000_0000 | 0b1111     | Buffer samples        | Read Only |
+-}
+ilaWb ::
+  forall dom depth a.
+  ( HiddenClockResetEnable dom
+  , BitPack a
+  , NFDataX a
+  , KnownNat depth
+  , 1 <= BitSize a `DivRU` 32
+  , 1 <= depth
+  ) =>
+  -- | Initial ILA configuration
+  IlaConfig depth (Signal dom a) ->
+  -- | Signal indicating if the predicate has triggered
+  Signal dom Bool ->
+  -- | The ILA wishbone interface
+  Circuit
+    (Wishbone dom Standard 32 (BitVector 32))
+    ()
+ilaWb config predicate = Circuit exposeIn
+ where
+  exposeIn (fwdM2S, _) = out
+   where
+    -- In theory, I could respond with `err` when an inproper address is given. However I don't
+    -- quite know how etherboneC reacts to `err` and I doubt it will propagate the error back to
+    -- the host.
+
+    -- All of this could be written as a struct and a mealy machine
+    -- I think that'd be nicer too...
+
+    postTriggerSampled :: Signal dom (Index depth)
+    postTriggerSampled = register 0 $ mux triggered (satAdd SatBound 1 <$> postTriggerSampled) 0
+
+    capture :: Signal dom Bool
+    capture =
+      register True $
+        addrMux
+          0x0000_0000
+          0b0001
+          (bitToBool . lsb <$> incomingData)
+          capture
+          fwdM2S
+
+    triggerMode :: Signal dom (Index 7)
+    triggerMode =
+      register 0 $
+        addrMux
+          0x0000_0000
+          0b0100
+          (unpack . resize <$> incomingData)
+          triggerMode
+          fwdM2S
+
+    triggerReset :: Signal dom Bool
+    triggerReset =
+      register False $
+        addrMux
+          0x0000_0000
+          0b0010
+          (bitToBool . lsb <$> incomingData)
+          (pure False)
+          fwdM2S
+
+    triggered :: Signal dom Bool
+    triggered =
+      register False $
+        addrMux
+          0x0000_0000
+          0b0010
+          (not <$> triggerReset)
+          (triggered .||. predicate)
+          fwdM2S
+
+    triggerPoint :: Signal dom (Index depth)
+    triggerPoint =
+      register config.triggerPoint $
+        addrMux
+          0x0000_0001
+          0b1111
+          (unpack . resize <$> incomingData)
+          triggerPoint
+          fwdM2S
+
+    shouldSample :: Signal dom Bool
+    shouldSample = not <$> triggered .||. postTriggerSampled .<. triggerPoint
+
+    incomingData = pack . writeData <$> fwdM2S
+
+    bufferOutput =
+      ilaBufferManager
+        (ilaCore config.size capture config.tracing (not <$> shouldSample) triggerReset)
+        fwdM2S
+
+    -- \| Generates the wishbone reply
+    reply ::
+      -- \| Wether or not we're in a cycle
+      Bool ->
+      -- \| The data to reply with (if in a read cycle)
+      BitVector 32 ->
+      -- \| The wishbone response
+      WishboneS2M (BitVector 32)
+    reply inCyc dat =
+      WishboneS2M
+        { readData = dat
+        , acknowledge = inCyc
+        , err = False
+        , stall = False
+        , retry = False
+        }
+
+    -- \| The first clock cycle shouldn't ack according to wishbone
+    delayedAck = inWbCycle fwdM2S .&&. (register False $ inWbCycle fwdM2S)
+
+    -- Writes are done in one clock cycle, but wishbone timing requires us to delay it by one clock cycle
+    out = (register emptyWishboneS2M $ liftA2 reply delayedAck bufferOutput, ())
+
 {- | The trigger handler of the ILA
 
 Given a predicate, it will test it against incoming samples and tell the buffer to stop sampling
