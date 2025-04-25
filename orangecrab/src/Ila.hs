@@ -10,14 +10,17 @@ import Clash.Prelude
 import ConfigGen
 import Packet
 import RingBuffer
+import WishboneUtils
 
 import Data.Data
 import Data.Maybe as DM
 
+import Clash.Cores.Etherbone (etherboneC)
+import Clash.Cores.UART (ValidBaud)
+import Communication
 import Protocols
 import Protocols.PacketStream
-
-
+import Protocols.Wishbone
 
 {- | The buffer of the ila, with signals to control wether or not the signals get captured
 
@@ -29,6 +32,7 @@ ilaCore ::
   forall dom size a.
   ( HiddenClockResetEnable dom
   , NFDataX a
+  , BitPack a
   , KnownNat size
   , 1 <= size
   ) =>
@@ -71,16 +75,17 @@ getWord ::
   BitVector word
 getWord a i = (unpack . resize $ pack a :: Vec n (BitVector word)) !! i
 
--- | Retrieves a specific word from the ILA buffer. It will only listen to addresses within the
--- range of 0x3000_0000 and 0x3fff_ffff. Each address refers to a specific word (=32 bits) in the
--- buffer.
---
--- Samples may not precisely equal 32 bits. They may be smaller or bigger than 32 bits. However, in
--- this function each sample is assigned one or more addresses for each word it's width takes up.
--- So a 10 bit sample will only take up one address, and a 50 bit one would take up 2 addresses.
--- Different samples never share the same memory space.
---
--- The memory remains consecutive
+{- | Retrieves a specific word from the ILA buffer. It will only listen to addresses within the
+range of 0x3000_0000 and 0x3fff_ffff. Each address refers to a specific word (=32 bits) in the
+buffer.
+
+Samples may not precisely equal 32 bits. They may be smaller or bigger than 32 bits. However, in
+this function each sample is assigned one or more addresses for each word it's width takes up.
+So a 10 bit sample will only take up one address, and a 50 bit one would take up 2 addresses.
+Different samples never share the same memory space.
+
+The memory remains consecutive
+-}
 ilaBufferManager ::
   forall dom depth a addrW.
   ( HiddenClockResetEnable dom
@@ -354,6 +359,39 @@ changeTriggerPoint = Circuit exposeIn
     newTrigger _ = Nothing
 
     out = (pure (), newTrigger <$> fwdIn)
+
+ilaUart ::
+  forall dom size a baud.
+  ( HiddenClockResetEnable dom
+  , ValidBaud dom baud
+  , NFDataX a
+  , BitPack a
+  , KnownNat size
+  , 1 <= size
+  , 1 <= BitSize a `DivRU` 32
+  ) =>
+  SNat baud ->
+  -- | The configuration of the ILA
+  IlaConfig size (Signal dom a) ->
+  -- | Trigger
+  Signal dom Bool ->
+  -- | The ILA circuit, the input needs to be connected to some sort of byte input and the output
+  -- is a PacketStream containing bytes to be routed to the PC.
+  -- TODO: example? Not added one yet due to possible change in API
+  Circuit
+    (CSignal dom Bit)
+    (CSignal dom Bit)
+ilaUart baud config triggered = circuit $ \rxBit -> do
+  (rxByte, txBit) <- uartDf baud -< (txByte, rxBit)
+
+  rxPs <- etherboneDfPacketizer <| holdUntilAck -< rxByte
+  txByte <- ps2df -< txPs
+
+  (txPs, wbMaster) <- etherboneC 0 (pure Nil) -< rxPs
+
+  ilaWb config triggered -< wbMaster
+
+  idC -< txBit
 
 {- | The ILA component itself
 
