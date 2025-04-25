@@ -1,4 +1,4 @@
-use std::io::{Read, Write, Result as IoResult};
+use std::io::{Read, Result as IoResult, Write};
 
 use crate::trigger::TriggerOp;
 
@@ -224,11 +224,13 @@ impl EBRecord {
             );
         }
         if self.reads.len() > 0 {
-            packet.push(self.read_addr.to_be_bytes().to_vec());
+            // Unlike in writes, in reads this field is *where* we need to return the data from
+            // However, we don't care about that, so we set it to zero
+            packet.push(0_u32.to_be_bytes().to_vec());
             packet.push(
                 self.reads
                     .iter()
-                    .flat_map(|n| n.to_be_bytes().to_vec())
+                    .flat_map(|n| (self.read_addr + n).to_be_bytes().to_vec())
                     .collect(),
             );
         }
@@ -242,13 +244,16 @@ impl EBRecord {
     {
         let mut bytes = self.packetize();
         medium.write_all(&bytes)?;
+        medium.flush()?;
         medium.read_exact(&mut bytes)?;
 
-        let words = bytes.chunks(4)
-            .map(|chunk| chunk.
-                iter()
-                .fold(0, |acc, byte| (acc << 8) | (*byte as u32))
-            )
+        let words = bytes
+            .chunks(4)
+            .map(|chunk| {
+                chunk
+                    .iter()
+                    .fold(0, |acc, byte| (acc << 8) | (*byte as u32))
+            })
             .collect();
 
         Ok(words)
