@@ -34,8 +34,9 @@ compareAddr ::
   -- | Output indicating if the current cycle matches the signal
   Signal dom Bool
 compareAddr addr byteSel m2s =
-  (\fwd -> fwd.addr == addr && fwd.busSelect == byteSel)
-    <$> m2s .&&. inWbCycle m2s
+  inWbCycle m2s
+    .&&. (\fwd -> fwd.addr == addr && fwd.busSelect == byteSel)
+    <$> m2s
 
 {- | Check if the current wishbone cycle falls within a specific address range. Ignoring byte select
 
@@ -55,8 +56,9 @@ compareAddrRange ::
   -- | Output indicating if the current cycle falls within the address range
   Signal dom Bool
 compareAddrRange minAddr maxAddr m2s =
-  (\fwd -> fwd.addr >= minAddr && fwd.addr <= maxAddr)
-    <$> m2s .&&. inWbCycle m2s
+  inWbCycle m2s
+    .&&. (\fwd -> fwd.addr >= minAddr && fwd.addr <= maxAddr)
+    <$> m2s
 
 {- | A mux but switching based on address
 
