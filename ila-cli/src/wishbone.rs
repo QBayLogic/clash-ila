@@ -98,10 +98,12 @@ impl EBRecord {
         // sub elements are also const? Annoying.
 
         const EB_MAGIC: u16 = 0x4e6f;
+        const EB_VERSION: u8 = 0x10; // Version 1
+        const ADDR_PORT_SIZE: u8 = 0x44; // 32 bit address and port sizes
 
         let eb_header = [
             EB_MAGIC.to_be_bytes(),
-            [0x10, 0x44], // Version 1, addr/port size 32 bit
+            [EB_VERSION, ADDR_PORT_SIZE],
         ]
         .concat();
         let record_header = [
