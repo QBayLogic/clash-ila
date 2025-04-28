@@ -2,7 +2,14 @@
 use std::time::Duration;
 use bitvec::prelude::{BitVec, Msb0};
 use crate::wishbone::WbTransaction;
+use crate::config::IlaConfig;
 use crate::trigger::TriggerOp;
+use crate::wishbone::WbTransaction;
+use bitvec::prelude::{BitVec, Msb0};
+use bitvec::store::BitStore;
+use bitvec::view::BitView;
+use std::io::{Read, Result as IoResult, Write};
+use std::time::Duration;
 
 /// A signal captured by the ILA
 ///
@@ -22,6 +29,53 @@ pub struct Signal {
 pub struct SignalCluster {
     pub cluster: Vec<Signal>,
     pub timestamp: Duration,
+}
+
+impl SignalCluster {
+    /// Interpret a stream of data as signals
+    pub fn from_data<T>(config: &IlaConfig, input: &Vec<T>) -> SignalCluster
+    where
+        T: BitStore,
+    {
+        let word_count = config.transaction_bit_count().div_ceil(32) as u32;
+        let bitvecs: Vec<BitVec<u8, Msb0>> = input
+            .chunks(word_count as usize)
+            .map(|chunk| {
+                chunk
+                    .view_bits::<Msb0>()
+                    .iter()
+                    .skip(chunk.len() * 32 - config.transaction_bit_count())
+                    .collect()
+            })
+            .collect();
+
+        let mut signals: Vec<Signal> = config
+            .signals
+            .iter()
+            .map(|signal| Signal {
+                name: signal.name.clone(),
+                width: signal.width,
+                samples: vec![],
+            })
+            .collect();
+
+        for transaction in bitvecs {
+            let mut bit_range_start = 0;
+            for signal in &mut signals {
+                let bit_range_end = bit_range_start + signal.width;
+
+                let bits = transaction[bit_range_start..bit_range_end].to_owned();
+                signal.samples.push(bits);
+
+                bit_range_start = bit_range_end;
+            }
+        }
+
+        SignalCluster {
+            cluster: signals,
+            timestamp: Duration::ZERO,
+        }
+    }
 }
 
 /// An enum for operating on different registers on the ILA, without having to know the explicit
