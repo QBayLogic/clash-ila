@@ -141,19 +141,45 @@ impl EBRecord {
     where
         T: Read + Write,
     {
+        const EB_HEADER_LEN_WORDS: usize = 1;
+
         let mut bytes = self.packetize();
         medium.write_all(&bytes)?;
         medium.flush()?;
         medium.read_exact(&mut bytes)?;
 
-        let words = bytes
+        let mut words: Vec<u32> = bytes
             .chunks(4)
+            .skip(EB_HEADER_LEN_WORDS)
             .map(|chunk| {
                 chunk
                     .iter()
                     .fold(0, |acc, byte| (acc << 8) | (*byte as u32))
             })
             .collect();
+
+        // Remove will panic with indices out-of-range
+        if words.len() < 2 {
+            return IoResult::Err(IoError::InvalidData.into())
+        }
+        let eb_record = words.remove(0);
+
+        // After the EBRecord there's a target address (BaseWriteAddr), which we don't care about
+        // as we set it to zero when creating the packet
+        // 
+        // This **COULD** be used in the future to target specific ILAs though!
+        words.remove(0);
+
+        // The first 16 bits of the EB record are flags, we don't care about for now
+        // The next 8 bits are write count, followed by 8 bits for a read count
+        // It is safe to assume we don't get any reads (as the ILA only has a EB slave interface)
+        // Thus we only have to keep track of write count
+        let write_count = ((eb_record & 0x0000ff00) >> 8) as usize;
+
+        words.truncate(write_count);
+        if words.len() != write_count {
+            return IoResult::Err(IoError::InvalidData.into())
+        }
 
         Ok(words)
     }
