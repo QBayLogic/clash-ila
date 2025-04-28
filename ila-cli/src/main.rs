@@ -89,19 +89,16 @@ impl ParseSubcommand for MonitorArgs {
 impl ParseSubcommand for TuiArgs {
     fn parse(self) {
         let rx_port = find_specified_port(&self.port, self.baud);
-        let mut tx_port = rx_port.try_clone().expect("Couldn't open port for writing");
+        let tx_port = rx_port.try_clone().expect("Couldn't open port for writing");
         let configs = config::read_config(&self.config)
             .expect(&format!("File at {:?} contained errors", &self.config));
+        assert!(configs.ilas.len() == 1, "As of now, only one instantiated ILA is supported.");
         let config = configs.ilas[0].clone();
 
         let Ok(mut session) = tui::TuiSession::new(&config) else {
             return;
         };
-
-        let rx = packet::packet_loop(rx_port.bytes(), config.clone());
-        tx_port.write(&[1, 2, 3, 4, 5, 6]);
-
-        session.main_loop(rx, tx_port);
+        session.main_loop(tx_port);
     }
 }
 
@@ -128,6 +125,7 @@ fn find_specified_port(check: &PathBuf, baud: u32) -> Box<dyn SerialPort> {
         .expect("Provided path is not a valid serial port.");
 
     serialport::new(valid_port.port_name, baud)
+        .timeout(Duration::from_secs(1))
         .open()
         .expect("Unable to open serial port (maybe busy?)")
 }
@@ -168,67 +166,6 @@ fn monitor_port(port: Box<dyn SerialPort>, args: MonitorArgs) {
 }
 
 fn main() {
-    //let mut port = serialport::new("/dev/ttyUSB0", 9600)
-    //    .timeout(Duration::from_secs(1))
-    //    .open()
-    //    .expect("Can't open port");
-
-    fn read_regs(port: &mut Box<dyn SerialPort>) {
-        let read = WbTransaction {
-            byte_select: [true; 4],
-            reads: vec![1, 2],
-            read_addr: 0x0000_0000,
-            writes: vec![],
-            write_addr: 0x0000_0000,
-        };
-        let records = read.to_records();
-        for record in records {
-            let tx_bytes = record.packetize();
-            let mut rx_bytes = vec![0; tx_bytes.len()];
-
-            port.write_all(&tx_bytes)
-                .and(port.flush())
-                .expect("Failed to write bytes");
-            port.read_exact(rx_bytes.as_mut_slice())
-                .expect("Didn't get response in time");
-            println!("Registers contain: {rx_bytes:02x?}");
-        }
-    }
-    fn write_reg(port: &mut Box<dyn SerialPort>, reg: u32, v: u32) {
-        let read = WbTransaction {
-            byte_select: [true; 4],
-            reads: vec![],
-            read_addr: 0x0000_0000,
-            writes: vec![v],
-            write_addr: reg,
-        };
-        let records = read.to_records();
-        for record in records {
-            let tx_bytes = record.packetize();
-            let mut rx_bytes = vec![0; tx_bytes.len()];
-
-            port.write_all(&tx_bytes)
-                .and(port.flush())
-                .expect("Failed to write bytes");
-            port.read_exact(rx_bytes.as_mut_slice())
-                .expect("Didn't get response in time");
-            println!("Write response: {rx_bytes:02x?}");
-        }
-    }
-
-    //for record in IlaRead::Buffer((0..100).into_iter().collect())
-    //    .to_wb_transaction()
-    //    .to_records() {
-    //    let output = record.perform(&mut port)
-    //        .expect("Failed to RX/TX bytes");
-    //    println!("{output:#08x?}");
-    //}
-
-    //read_regs(&mut port);
-    //write_reg(&mut port, 1, 20);
-    //write_reg(&mut port, 2, 08);
-    //read_regs(&mut port);
-
     let cli = Cli::parse();
 
     match cli.command {

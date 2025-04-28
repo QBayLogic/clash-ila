@@ -1,5 +1,4 @@
-use std::io::Write;
-use std::sync::mpsc::Receiver;
+use std::io::{Read, Write};
 use std::{io, time::Duration};
 
 use crossterm::event::{Event as TuiEvent, KeyEvent, KeyModifiers};
@@ -16,10 +15,9 @@ use tui::{
     *,
 };
 
+use crate::communication::{perform_register_operation, IlaRegisters, SignalCluster};
 use crate::config::IlaConfig;
 use crate::vcd::write_to_vcd;
-
-use crate::packet::*;
 
 /// The keybind text displayed in the TUI
 const KEYBIND_TEXT: &'static str = r#"  C-c   ---   Exit
@@ -268,13 +266,13 @@ impl<'a> TuiSession<'a> {
     }
 
     /// Handle the keypresses. Returns wether or not it should break out of the main loop or not
-    fn on_key_event<T: Write>(&mut self, event: KeyEvent, tx_port: &mut T) -> bool {
+    fn on_key_event<T: Read + Write>(&mut self, event: KeyEvent, tx_port: &mut T) -> bool {
         match (&mut self.state, event.code, event.modifiers) {
             (TuiState::Main, KeyCode::Char('c'), KeyModifiers::CONTROL) => {
                 return true;
             }
             (TuiState::Main, KeyCode::Char('r'), _) => {
-                if let Err(err) = send_packet(tx_port, &ResetTriggerPacket) {
+                if let Err(err) = perform_register_operation(tx_port, &self.config, &IlaRegisters::TriggerReset) {
                     self.log.push(format!("Error: {err}"));
                 }
             }
@@ -326,7 +324,7 @@ impl<'a> TuiSession<'a> {
                                     .push(format!("Invalid input; must be specified range"));
                             } else {
                                 self.log
-                                    .push(match send_packet(tx_port, &ChangeTriggerPoint(n)) {
+                                    .push(match perform_register_operation(tx_port, self.config, &IlaRegisters::TriggerPoint(n)) {
                                         Ok(_) => String::from("Trigger point change made"),
                                         Err(err) => format!("Error: {err}"),
                                     });
@@ -374,18 +372,10 @@ impl<'a> TuiSession<'a> {
     /// The main TUI loop
     ///
     /// Handles everything from rendering to the input of the TUI interface
-    pub fn main_loop<T: Write>(&mut self, incoming_signals: Receiver<Packets>, mut tx_port: T) {
+    pub fn main_loop<T: Read + Write>(&mut self, mut tx_port: T) {
         self.render();
 
         loop {
-            if let Ok(packet) = incoming_signals.try_recv() {
-                match packet {
-                    Packets::Data(signals) => self.captured.push(signals),
-                }
-
-                self.render();
-            }
-
             if let Ok(true) = poll(Duration::ZERO) {
                 let event = match read() {
                     Ok(TuiEvent::Key(key)) => key,
