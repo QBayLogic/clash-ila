@@ -82,8 +82,6 @@ pub enum IlaRegisters {
     Capture(bool),
     /// Register re-arming the trigger (and clear the buffer)
     TriggerReset,
-    /// Register controlling wether or not to use the trigger mask
-    EnableMask(bool),
     /// Register controlling how the trigger should operate
     TriggerOp(TriggerOp),
     /// Register controlling how many samples it should store after triggering
@@ -107,10 +105,9 @@ impl IlaRegisters {
     pub fn address(&self) -> (u32, [bool; 4]) {
         match self {
             IlaRegisters::Capture(_) => (0x0000_0000, [false, false, false, true]),
-            IlaRegisters::TriggerReset => (0x0000_0001, [false, false, false, true]),
-            IlaRegisters::EnableMask(_) => (0x0000_0001, [false, false, true, false]),
-            IlaRegisters::TriggerOp(_) => (0x0000_0001, [false, true, false, false]),
-            IlaRegisters::TriggerPoint(_) => (0x0000_0002, [true; 4]),
+            IlaRegisters::TriggerReset => (0x0000_0000, [false, false, true, false]),
+            IlaRegisters::TriggerOp(_) => (0x0000_0000, [false, true, false, false]),
+            IlaRegisters::TriggerPoint(_) => (0x0000_0001, [true; 4]),
             IlaRegisters::Mask(_) => (0x1000_0000, [true; 4]),
             IlaRegisters::Compare(_) => (0x2000_0000, [true; 4]),
             IlaRegisters::Buffer(_) => (0x3000_0000, [true; 4]),
@@ -123,7 +120,6 @@ impl IlaRegisters {
         match self {
             IlaRegisters::Capture(_) => RegisterOutput::None,
             IlaRegisters::TriggerReset => RegisterOutput::None,
-            IlaRegisters::EnableMask(_) => RegisterOutput::None,
             IlaRegisters::TriggerOp(_) => RegisterOutput::None,
             IlaRegisters::TriggerPoint(_) => RegisterOutput::None,
             IlaRegisters::Mask(_) => RegisterOutput::None,
@@ -143,9 +139,6 @@ impl IlaRegisters {
                 WbTransaction::new_writes(byte_select, addr, vec![*capture as u32])
             }
             IlaRegisters::TriggerReset => WbTransaction::new_writes(byte_select, addr, vec![1]),
-            IlaRegisters::EnableMask(enable) => {
-                WbTransaction::new_writes(byte_select, addr, vec![(*enable as u32) << 8])
-            }
             IlaRegisters::TriggerOp(trigger_op) => WbTransaction::new_writes(
                 byte_select,
                 addr,
