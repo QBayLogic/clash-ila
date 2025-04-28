@@ -360,6 +360,42 @@ changeTriggerPoint = Circuit exposeIn
 
     out = (pure (), newTrigger <$> fwdIn)
 
+{- | The ILA component itself
+
+Given any set of signals and a trigger condition, it will be capable of sampling the signals up until
+it is triggered. At which point the connected host device can send commands to retrieve / re-arm the
+trigger. Data communication is being done through `Etherbone` packets which get sent from the host
+device. If run configuration of the ILA on the FPGA is desired, please look at `ilaWb` to instantiate
+an ILA with an Wishbone interface instead.
+-}
+ila :: 
+  forall dom size a.
+  ( HiddenClockResetEnable dom
+  , NFDataX a
+  , BitPack a
+  , KnownNat size
+  , 1 <= size
+  , 1 <= BitSize a `DivRU` 32
+  ) =>
+  -- | The initial configuration of the ILA
+  IlaConfig size (Signal dom a) ->
+  -- | Trigger
+  Signal dom Bool ->
+  -- | The ILA circuit, the incoming packet stream should contain valid `Etherbone` packets. The
+  -- outgoing stream are etherbone response packets.
+  Circuit
+    (PacketStream dom 4 ())
+    (PacketStream dom 4 ())
+ila config triggered = circuit $ \incoming -> do
+  (outgoing, wbMaster) <- etherboneC 0 (pure Nil) -< incoming
+
+  ilaWb config triggered -< wbMaster
+
+  idC -< outgoing
+
+{- | UART wrapper around the ILA. A simple drop-in replacement for `ila`. Useful if the only
+connection to the host PC is an UART connection.
+-}
 ilaUart ::
   forall dom size a baud.
   ( HiddenClockResetEnable dom
@@ -371,13 +407,12 @@ ilaUart ::
   , 1 <= BitSize a `DivRU` 32
   ) =>
   SNat baud ->
-  -- | The configuration of the ILA
+  -- | The initial configuration of the ILA
   IlaConfig size (Signal dom a) ->
   -- | Trigger
   Signal dom Bool ->
-  -- | The ILA circuit, the input needs to be connected to some sort of byte input and the output
-  -- is a PacketStream containing bytes to be routed to the PC.
-  -- TODO: example? Not added one yet due to possible change in API
+  -- | The ILA circuit but with signals of bits as input and output. These should be directly wired
+  -- to the toplevel UART RX and TX pins.
   Circuit
     (CSignal dom Bit)
     (CSignal dom Bit)
@@ -387,49 +422,7 @@ ilaUart baud config triggered = circuit $ \rxBit -> do
   rxPs <- etherboneDfPacketizer <| holdUntilAck -< rxByte
   txByte <- ps2df -< txPs
 
-  (txPs, wbMaster) <- etherboneC 0 (pure Nil) -< rxPs
-
-  ilaWb config triggered -< wbMaster
+  txPs <- ila config triggered -< rxPs
 
   idC -< txBit
 
-{- | The ILA component itself
-
-Given any signal and a trigger condition, it will be capable of sampling the signal up until
-it is triggered. At which point it will proceed to send out all the samples it captured via the
-`PacketStream` protocol. This data can than be forwarded to an external port and the ILA CLI
-will display this data.
--}
-ila ::
-  forall dom size a.
-  ( HiddenClockResetEnable dom
-  , NFDataX a
-  , BitPack a
-  , KnownNat size
-  , 1 <= BitSize a `DivRU` 8
-  , 1 <= size
-  ) =>
-  -- | The configuration of the ILA
-  IlaConfig size (Signal dom a) ->
-  -- | Trigger
-  Signal dom Bool ->
-  -- | Capture
-  Signal dom Bool ->
-  -- | The ILA circuit, the input needs to be connected to some sort of byte input and the output
-  -- is a PacketStream containing bytes to be routed to the PC.
-  -- TODO: example? Not added one yet due to possible change in API
-  Circuit
-    (CSignal dom (Maybe (BitVector 8)))
-    (PacketStream dom (BitSize a `DivRU` 8) IlaFinalHeader)
-ila config trigger capture = circuit $ \rxByte -> do
-  [dec0, dec1] <- fanoutCSig d2 <| deserializeToPacket -< rxByte
-
-  triggerReset <- rearmTrigger -< dec0
-  hasNewTrigger <- changeTriggerPoint -< dec1
-
-  controller <-
-    (triggerController config trigger $ ilaCore config.size capture)
-      -< (hasNewTrigger, triggerReset)
-  packets <- finalizePacket -< controller
-
-  idC -< packets
