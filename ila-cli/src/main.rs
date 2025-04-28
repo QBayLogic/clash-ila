@@ -4,10 +4,11 @@ use std::time::Duration;
 
 use clap::{Args, Parser, Subcommand};
 use serialport::SerialPort;
+use vcd::write_to_vcd;
 use wishbone::WbTransaction;
 
 mod config;
-mod packet;
+mod communication;
 mod trigger;
 mod tui;
 mod vcd;
@@ -23,12 +24,8 @@ struct Cli {
 
 #[derive(Subcommand, Debug)]
 enum Subcommands {
-    /// Generate a VCD dump from incoming signals
-    Vcd(VcdArgs),
     /// Enter the TUI interface
     Tui(TuiArgs),
-    /// Analyse incoming packets and attempt to parse them according to packet formats
-    Analysis(AnalysisArgs),
     /// Monitor output of the port, all data is displayed in hex
     Monitor(MonitorArgs),
     /// Lists all serial ports available
@@ -80,60 +77,6 @@ struct TuiArgs {
 
     #[arg(short, long, default_value_t = 9600, help = "Sets baud rate")]
     baud: u32,
-}
-
-#[derive(Args, Debug)]
-struct AnalysisArgs {
-    #[arg(short, long, help = "Path to serial port to use")]
-    port: PathBuf,
-
-    #[arg(
-        short = 'c',
-        long,
-        default_value = "ilaconf.json",
-        help = "Path to config file"
-    )]
-    config: PathBuf,
-
-    #[arg(short, long, default_value_t = 9600, help = "Sets baud rate")]
-    baud: u32,
-}
-
-#[derive(Args, Debug)]
-struct VcdArgs {
-    #[arg(short, long, help = "Path to serial port to use")]
-    port: PathBuf,
-
-    #[arg(short = 'o', long, help = "Path to output the VCD file")]
-    path: PathBuf,
-
-    #[arg(
-        short = 'c',
-        long,
-        default_value = "ilaconf.json",
-        help = "Path to config file"
-    )]
-    config: PathBuf,
-
-    #[arg(short, long, default_value_t = String::from("TopLevel"), help = "The name of the toplevel to display in the VCD")]
-    toplevel: String,
-
-    #[arg(short, long, default_value_t = 9600, help = "Sets baud rate")]
-    baud: u32,
-}
-
-impl ParseSubcommand for AnalysisArgs {
-    fn parse(self) {
-        let port = find_specified_port(&self.port, self.baud);
-        packet_analysis(port, self)
-    }
-}
-
-impl ParseSubcommand for VcdArgs {
-    fn parse(self) {
-        let port = find_specified_port(&self.port, self.baud);
-        vcd_dump(port, self)
-    }
 }
 
 impl ParseSubcommand for MonitorArgs {
@@ -224,53 +167,11 @@ fn monitor_port(port: Box<dyn SerialPort>, args: MonitorArgs) {
     }
 }
 
-/// `analysis` CLI handler
-fn packet_analysis(port: Box<dyn SerialPort>, args: AnalysisArgs) {
-    println!(
-        "Analysing packets on {}",
-        port.name().unwrap_or(String::from("<unknown>"))
-    );
-
-    //TODO: MAKE THIS A LOOP FOR EACH ILA INSTEAD OF JUST USING THE FIRST ONE!!!!
-    let configs = config::read_config(&args.config)
-        .expect(&format!("File at {:?} contained errors", &args.config));
-    let config = configs.ilas[0].clone();
-
-    let rx = packet::packet_loop(port.bytes(), config);
-    for packet in rx {
-        println!("Valid packet recieved: {packet:?}");
-    }
-}
-
-/// `vcd` CLI handler
-fn vcd_dump(port: Box<dyn SerialPort>, args: VcdArgs) {
-    println!(
-        "Waiting on packets to generate VCD on {}",
-        port.name().unwrap_or(String::from("<unknown>"))
-    );
-
-    //TODO: MAKE THIS A LOOP FOR EACH ILA INSTEAD OF JUST USING THE FIRST ONE!!!!
-    let configs = config::read_config(&args.config)
-        .expect(&format!("File at {:?} contained errors", &args.config));
-    let config = configs.ilas[0].clone();
-
-    let rx = packet::packet_loop(port.bytes(), config.clone());
-    let mut rx_iter = rx.iter();
-
-    let signals = loop {
-        if let Some(packet::Packets::Data(signals)) = rx_iter.next() {
-            break signals;
-        }
-    };
-
-    vcd::write_to_vcd(&signals, &config, args.path).expect("Failed to generate VCD file");
-}
-
 fn main() {
-    let mut port = serialport::new("/dev/ttyUSB1", 9600)
-        .timeout(Duration::from_secs(1))
-        .open()
-        .expect("Can't open port");
+    //let mut port = serialport::new("/dev/ttyUSB0", 9600)
+    //    .timeout(Duration::from_secs(1))
+    //    .open()
+    //    .expect("Can't open port");
 
     fn read_regs(port: &mut Box<dyn SerialPort>) {
         let read = WbTransaction {
@@ -285,7 +186,8 @@ fn main() {
             let tx_bytes = record.packetize();
             let mut rx_bytes = vec![0; tx_bytes.len()];
 
-            port.write_all(&tx_bytes).and(port.flush())
+            port.write_all(&tx_bytes)
+                .and(port.flush())
                 .expect("Failed to write bytes");
             port.read_exact(rx_bytes.as_mut_slice())
                 .expect("Didn't get response in time");
@@ -305,7 +207,8 @@ fn main() {
             let tx_bytes = record.packetize();
             let mut rx_bytes = vec![0; tx_bytes.len()];
 
-            port.write_all(&tx_bytes).and(port.flush())
+            port.write_all(&tx_bytes)
+                .and(port.flush())
                 .expect("Failed to write bytes");
             port.read_exact(rx_bytes.as_mut_slice())
                 .expect("Didn't get response in time");
@@ -313,27 +216,33 @@ fn main() {
         }
     }
 
-    read_regs(&mut port);
-    write_reg(&mut port, 1, 20);
-    write_reg(&mut port, 2, 08);
-    read_regs(&mut port);
-
-    //let cli = Cli::parse();
-    //
-    //match cli.command {
-    //    Subcommands::Vcd(args) => args.parse(),
-    //    Subcommands::Analysis(args) => args.parse(),
-    //    Subcommands::Monitor(args) => args.parse(),
-    //    Subcommands::Tui(args) => args.parse(),
-    //    Subcommands::List => {
-    //        let ports =
-    //            serialport::available_ports().expect("Unable to iterate serial devices. Exiting.");
-    //
-    //        println!("Available ports:");
-    //        for port in ports {
-    //            println!("\t{}", port.port_name);
-    //        }
-    //        return;
-    //    }
+    //for record in IlaRead::Buffer((0..100).into_iter().collect())
+    //    .to_wb_transaction()
+    //    .to_records() {
+    //    let output = record.perform(&mut port)
+    //        .expect("Failed to RX/TX bytes");
+    //    println!("{output:#08x?}");
     //}
+
+    //read_regs(&mut port);
+    //write_reg(&mut port, 1, 20);
+    //write_reg(&mut port, 2, 08);
+    //read_regs(&mut port);
+
+    let cli = Cli::parse();
+
+    match cli.command {
+        Subcommands::Monitor(args) => args.parse(),
+        Subcommands::Tui(args) => args.parse(),
+        Subcommands::List => {
+            let ports =
+                serialport::available_ports().expect("Unable to iterate serial devices. Exiting.");
+
+            println!("Available ports:");
+            for port in ports {
+                println!("\t{}", port.port_name);
+            }
+            return;
+        }
+    }
 }
