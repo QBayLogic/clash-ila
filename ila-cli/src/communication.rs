@@ -100,8 +100,15 @@ pub enum IlaRegisters {
     Buffer(Vec<u32>),
 }
 
+/// Output of the register whenever a read operation is performed on the ILA.
+pub enum RegisterOutput {
+    None,
+    BufferContent(SignalCluster),
+}
+
 impl IlaRegisters {
-    fn get_address(&self) -> (u32, [bool; 4]) {
+    /// Get the address and byte select for a specific register
+    pub fn address(&self) -> (u32, [bool; 4]) {
         match self {
             IlaRegisters::Capture(_) => (0x0000_0000, [false, false, false, true]),
             IlaRegisters::TriggerReset => (0x0000_0001, [false, false, false, true]),
@@ -114,8 +121,23 @@ impl IlaRegisters {
         }
     }
 
-    fn to_wb_transaction(&self) -> WbTransaction {
-        let (addr, byte_select) = self.get_address();
+    /// 'Translates' the raw word output into something useful, given the register of which the
+    /// read was attempted from
+    pub fn translate_output(&self, ila: &IlaConfig, output: &Vec<u32>) -> RegisterOutput {
+        match self {
+            IlaRegisters::Capture(_) => RegisterOutput::None,
+            IlaRegisters::TriggerReset => RegisterOutput::None,
+            IlaRegisters::EnableMask(_) => RegisterOutput::None,
+            IlaRegisters::TriggerOp(_) => RegisterOutput::None,
+            IlaRegisters::TriggerPoint(_) => RegisterOutput::None,
+            IlaRegisters::Mask(_) => RegisterOutput::None,
+            IlaRegisters::Compare(_) => RegisterOutput::None,
+            IlaRegisters::Buffer(_) => {
+                RegisterOutput::BufferContent(SignalCluster::from_data(ila, output))
+            }
+        }
+    }
+
         match self {
             IlaRegisters::Capture(capture) => {
                 WbTransaction::new_writes(byte_select, addr, vec![*capture as u32])
