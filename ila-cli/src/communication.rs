@@ -138,6 +138,10 @@ impl IlaRegisters {
         }
     }
 
+    /// Convert the register into a `WbTransaction`, which can then be converted into wishbone
+    /// records
+    pub fn to_wb_transaction(&self, ila: &IlaConfig) -> WbTransaction {
+        let (addr, byte_select) = self.address();
         match self {
             IlaRegisters::Capture(capture) => {
                 WbTransaction::new_writes(byte_select, addr, vec![*capture as u32])
@@ -176,8 +180,14 @@ impl IlaRegisters {
                     .collect();
                 WbTransaction::new_writes(byte_select, addr, words)
             }
-            IlaRegisters::Buffer(items) => {
-                WbTransaction::new_reads(byte_select, addr, items.clone())
+            IlaRegisters::Buffer(logical_indices) => {
+                let words_per_index = ila.transaction_bit_count().div_ceil(32) as u32;
+                let buffer_indices = logical_indices
+                    .iter()
+                    .map(|index| (*index..*index + words_per_index).collect::<Vec<u32>>())
+                    .flatten()
+                    .collect();
+                WbTransaction::new_reads(byte_select, addr, buffer_indices)
             }
         }
     }
