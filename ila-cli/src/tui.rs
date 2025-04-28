@@ -15,12 +15,15 @@ use tui::{
     *,
 };
 
-use crate::communication::{perform_register_operation, IlaRegisters, SignalCluster};
+use crate::communication::{
+    perform_register_operation, IlaRegisters, RegisterOutput, SignalCluster,
+};
 use crate::config::IlaConfig;
 use crate::vcd::write_to_vcd;
 
 /// The keybind text displayed in the TUI
 const KEYBIND_TEXT: &'static str = r#"  C-c   ---   Exit
+  space ---   Read samples (if triggered)
   t     ---   Change trigger point
   c     ---   Change trigger logic
   r     ---   Reset trigger
@@ -272,8 +275,24 @@ impl<'a> TuiSession<'a> {
                 return true;
             }
             (TuiState::Main, KeyCode::Char('r'), _) => {
-                if let Err(err) = perform_register_operation(tx_port, &self.config, &IlaRegisters::TriggerReset) {
+                if let Err(err) =
+                    perform_register_operation(tx_port, &self.config, &IlaRegisters::TriggerReset)
+                {
                     self.log.push(format!("Error: {err}"));
+                }
+            }
+            (TuiState::Main, KeyCode::Char(' '), _) => {
+                let indices: Vec<u32> = (0_u32..self.config.buffer_size as u32).collect();
+                match perform_register_operation(
+                    tx_port,
+                    &self.config,
+                    &IlaRegisters::Buffer(indices),
+                ) {
+                    Ok(RegisterOutput::BufferContent(cluster)) => self.captured.push(cluster),
+                    Ok(_) => self
+                        .log
+                        .push(format!("Unexpected output when reading buffer")),
+                    Err(err) => self.log.push(format!("Error: {err}")),
                 }
             }
             (TuiState::Main, KeyCode::Char('t'), _) => {
@@ -298,7 +317,7 @@ impl<'a> TuiSession<'a> {
                 // Handle the case of whenever a prompt gets completed
                 // I want to move this to a seperate function, however due to borrow limits I can't
                 // and that's kind of very annoying
-                
+
                 match prompt.reason {
                     PromptReason::SaveVcd => {
                         if let Some(sample) = self.captured.last() {
@@ -323,11 +342,16 @@ impl<'a> TuiSession<'a> {
                                 self.log
                                     .push(format!("Invalid input; must be specified range"));
                             } else {
-                                self.log
-                                    .push(match perform_register_operation(tx_port, self.config, &IlaRegisters::TriggerPoint(n)) {
+                                self.log.push(
+                                    match perform_register_operation(
+                                        tx_port,
+                                        self.config,
+                                        &IlaRegisters::TriggerPoint(n),
+                                    ) {
                                         Ok(_) => String::from("Trigger point change made"),
                                         Err(err) => format!("Error: {err}"),
-                                    });
+                                    },
+                                );
                             }
                         } else {
                             self.log
