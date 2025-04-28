@@ -1,7 +1,3 @@
-
-use std::time::Duration;
-use bitvec::prelude::{BitVec, Msb0};
-use crate::wishbone::WbTransaction;
 use crate::config::IlaConfig;
 use crate::trigger::TriggerOp;
 use crate::wishbone::WbTransaction;
@@ -193,3 +189,24 @@ impl IlaRegisters {
     }
 }
 
+/// Perform a register operation on the ILA given a valid medium to do so.
+/// 
+/// The register will be converted into a `WbTransaction` and then sent over the network using the
+/// Etherbone specifications.
+///
+/// If the operation is a read, it will return the data read. Write operations will return
+/// `RegisterOutput::None`
+pub fn perform_register_operation<T>(
+    medium: &mut T,
+    ila: &IlaConfig,
+    register: &IlaRegisters,
+) -> IoResult<RegisterOutput>
+where
+    T: Read + Write,
+{
+    let mut output = Vec::new();
+    for record in register.to_wb_transaction(ila).to_records() {
+        output.append(&mut record.perform(medium)?);
+    }
+    Ok(register.translate_output(ila, &output))
+}

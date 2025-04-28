@@ -1,16 +1,4 @@
-use std::{io::{Read, Result as IoResult, Write}, time::Duration};
-
-use bitvec::{
-    order::Msb0,
-    vec::BitVec,
-    view::{AsBits, BitView},
-};
-
-use crate::{
-    config::IlaConfig,
-    communication::{Signal, SignalCluster},
-    trigger::TriggerOp,
-};
+use std::io::{Read, Result as IoResult, ErrorKind as IoError, Write};
 
 /// A wishbone transaction
 ///
@@ -185,48 +173,3 @@ impl EBRecord {
     }
 }
 
-pub fn read_buffer(config: &IlaConfig) -> WbTransaction {
-    let word_count = config.transaction_bit_count().div_ceil(32) as u32;
-    IlaRead::Buffer((0..(config.buffer_size as u32 * word_count)).collect()).to_wb_transaction()
-}
-
-pub fn interpret_buffer_content(config: &IlaConfig, input: Vec<u32>) -> SignalCluster {
-    let word_count = config.transaction_bit_count().div_ceil(32) as u32;
-    let bitvecs: Vec<BitVec<u8, Msb0>> = input[3..]
-        .chunks(word_count as usize)
-        .map(|chunk| {
-            chunk
-                .view_bits::<Msb0>()
-                .iter()
-                .skip(chunk.len() * 32 - config.transaction_bit_count())
-                .collect()
-        })
-        .collect();
-
-    let mut signals: Vec<Signal> = config
-        .signals
-        .iter()
-        .map(|signal| Signal {
-            name: signal.name.clone(),
-            width: signal.width,
-            samples: vec![],
-        })
-        .collect();
-
-    for transaction in bitvecs {
-        let mut bit_range_start = 0;
-        for signal in &mut signals {
-            let bit_range_end = bit_range_start + signal.width;
-
-            let bits = transaction[bit_range_start..bit_range_end].to_owned();
-            signal.samples.push(bits);
-
-            bit_range_start = bit_range_end;
-        }
-    }
-
-    SignalCluster {
-        cluster: signals,
-        timestamp: Duration::ZERO,
-    }
-}
