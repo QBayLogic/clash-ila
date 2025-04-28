@@ -13,11 +13,9 @@ import Clash.Prelude
 
 import Data.Maybe qualified as DM
 
-import Communication
 import ConfigGen
 import Domain
 import Ila
-import Packet
 import Pmod
 import Protocols
 
