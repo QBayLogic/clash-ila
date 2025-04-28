@@ -75,7 +75,7 @@ library
     Pmod
     RGB
     RingBuffer
-    Probes
+    Ila
     Communication
     Packet
 
@@ -87,6 +87,7 @@ test-suite unittests
   other-modules:
     Tests.RingBuffer
     Tests.Packet
+    Tests.Communication
   build-depends:
     orangecrab
 
