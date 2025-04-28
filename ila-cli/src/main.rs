@@ -27,11 +27,6 @@ enum Subcommands {
     List,
 }
 
-/// Simple trait to indicate this is a valid subcommand with arguments
-trait ParseSubcommand {
-    fn parse(self);
-}
-
 #[derive(Args, Debug)]
 struct MonitorArgs {
     #[arg(short, long, help = "Path to serial port to use")]
@@ -81,6 +76,11 @@ struct VcdArgs {
     baud: u32,
 }
 
+/// Simple trait to indicate this is a valid subcommand with arguments
+trait ParseSubcommand {
+    fn parse(self);
+}
+
 impl ParseSubcommand for AnalysisArgs {
     fn parse(self) {
         let port = find_specified_port(&self.port, self.baud);
@@ -111,13 +111,17 @@ impl ParseSubcommand for MonitorArgs {
 ///
 /// Panics if the user provided an incorrect path or other IO errors accure
 fn find_specified_port(check: &PathBuf, baud: u32) -> Box<dyn SerialPort> {
-    let ports = serialport::available_ports().expect("Unable to iterate serial devices. Exiting.");
+    let ports = match serialport::available_ports() {
+        Ok(ports) => ports,
+        Err(err) => {
+            println!("Unable to qeury serial port information;");
+            println!("Kind: {:?}", err.kind);
+            println!("Reason: {}", err.description);
+            panic!("Unable to query serial port information.")
+        }
+    };
 
-    let canon = check
-        .as_path()
-        .canonicalize()
-        .expect("Invalid path provided");
-    let check_path = canon.as_os_str().to_string_lossy();
+    let check_path = check.display().to_string();
 
     let valid_port = ports
         .into_iter()
@@ -205,8 +209,15 @@ fn main() {
         Subcommands::Analysis(args) => args.parse(),
         Subcommands::Monitor(args) => args.parse(),
         Subcommands::List => {
-            let ports =
-                serialport::available_ports().expect("Unable to iterate serial devices. Exiting.");
+            let ports = match serialport::available_ports() {
+                Ok(ports) => ports,
+                Err(err) => {
+                    println!("Unable to qeury serial port information;");
+                    println!("Kind: {:?}", err.kind);
+                    println!("Reason: {}", err.description);
+                    panic!("Unable to query serial port information.")
+                }
+            };
 
             println!("Available ports:");
             for port in ports {

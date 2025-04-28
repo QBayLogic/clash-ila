@@ -10,6 +10,9 @@ import Data.Proxy
 import Protocols
 import Protocols.PacketStream
 
+packetPreamble :: BitVector 32
+packetPreamble = 0xea88eacd
+
 class IlaPacketType a where
   ilaPacketType :: a -> BitVector 16
 
@@ -100,6 +103,6 @@ finalizePacket = packetizerC headerTransfer headerTransfer
  where
   headerTransfer packet =
     IlaFinalHeader
-      { preamble = 0xea88eacd
+      { preamble = packetPreamble
       , kind = ilaPacketType packet
       }

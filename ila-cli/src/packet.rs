@@ -1,6 +1,6 @@
 use std::{
     io::{Bytes, Read},
-    sync::mpsc::{self, Receiver},
+    sync::mpsc::{self, Receiver, Sender},
 };
 
 use bitvec::prelude::*;
@@ -145,6 +145,54 @@ pub fn get_packet(data: &Vec<u8>) -> Result<(Packets, usize), ParseErr> {
     }
 }
 
+/// Given a buffer filled with bytes, attempts to construct a valid packet and send it over a
+/// `Sender` channel. Clears the buffer up until the pre-amble if no valid packet could be
+/// constructed.
+fn try_complete_packet(tx: &Sender<Packets>, buffer: &mut Vec<u8>) {
+    if buffer.is_empty() {
+        return;
+    }
+
+    match get_packet(&buffer) {
+        Ok((packet, leftover)) => {
+            match tx.send(packet) {
+                Ok(_) => (),
+                Err(err) => {
+                    eprintln!("Failure sending valid packet over thread {}", err)
+                }
+            }
+            *buffer = buffer[(buffer.len() - leftover)..].to_vec();
+        }
+        Err(err) => match err {
+            ParseErr::NeedsMoreBytes => (),
+            ParseErr::InvalidType => {
+                let pos = find_preamble(&buffer);
+                match pos {
+                    Some(p) => *buffer = buffer[p..].to_vec(),
+                    None => buffer.clear(),
+                }
+            }
+            ParseErr::UnsupportedVersion => {
+                let pos = find_preamble(&buffer);
+                match pos {
+                    Some(p) => *buffer = buffer[p..].to_vec(),
+                    None => buffer.clear(),
+                }
+            }
+            ParseErr::NoPreamble => {
+                let pos = find_preamble(&buffer);
+                match pos {
+                    Some(p) => *buffer = buffer[p..].to_vec(),
+                    None => buffer.clear(),
+                }
+            }
+            ParseErr::InvalidPreamblePlacement(p) => {
+                *buffer = buffer[p..].to_vec();
+            }
+        },
+    }
+}
+
 /// Create a loop for reading and parsing packets over a certain bytestream
 ///
 /// Depending on the underlying iterator, it may block until it has recieved valid data. Therefore
@@ -158,59 +206,17 @@ where
 {
     let (tx, rx) = mpsc::channel();
 
-    let packet_sniffer = move || {
+    std::thread::spawn(move || {
         let mut buffer: Vec<u8> = vec![];
 
         for byte in bytesteam {
             let Ok(byte) = byte else {
-                if buffer.is_empty() {
-                    continue;
-                }
-
-                match get_packet(&buffer) {
-                    Ok((packet, leftover)) => {
-                        match tx.send(packet) {
-                            Ok(_) => (),
-                            Err(err) => {
-                                eprintln!("Failure sending valid packet over thread {}", err)
-                            }
-                        }
-                        buffer = buffer[(buffer.len() - leftover)..].to_vec();
-                    }
-                    Err(err) => match err {
-                        ParseErr::NeedsMoreBytes => (),
-                        ParseErr::InvalidType => {
-                            let pos = find_preamble(&buffer);
-                            match pos {
-                                Some(p) => buffer = buffer[p..].to_vec(),
-                                None => buffer.clear(),
-                            }
-                        }
-                        ParseErr::UnsupportedVersion => {
-                            let pos = find_preamble(&buffer);
-                            match pos {
-                                Some(p) => buffer = buffer[p..].to_vec(),
-                                None => buffer.clear(),
-                            }
-                        }
-                        ParseErr::NoPreamble => {
-                            let pos = find_preamble(&buffer);
-                            match pos {
-                                Some(p) => buffer = buffer[p..].to_vec(),
-                                None => buffer.clear(),
-                            }
-                        }
-                        ParseErr::InvalidPreamblePlacement(p) => {
-                            buffer = buffer[p..].to_vec();
-                        }
-                    },
-                }
+                try_complete_packet(&tx, &mut buffer);
                 continue;
             };
             buffer.push(byte);
         }
-    };
-    std::thread::spawn(packet_sniffer);
+    });
 
     rx
 }
