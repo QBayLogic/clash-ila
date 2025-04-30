@@ -1,7 +1,9 @@
+use std::time::Duration;
 use std::{io::Result as IoResult, path::Path};
 use vcd::{IdCode, SimulationCommand, Value as VcdValue};
 
 use crate::packet::*;
+use crate::config::{IlaConfig, IlaConfigurations, IlaSignal};
 
 type VcdWriter = vcd::Writer<std::io::BufWriter<std::fs::File>>;
 type VcdBitVec = Vec<VcdValue>;
@@ -22,15 +24,15 @@ impl VcdSignal {
     ///
     /// Sadly this function cannot be implemented using `Into` because it will directly write the
     /// signal definition to the file.
-    fn from_vcd(vcd_writer: &mut VcdWriter, signal: &DataPacket) -> IoResult<VcdSignal> {
+    fn from_vcd(vcd_writer: &mut VcdWriter, signal: &Signal) -> IoResult<VcdSignal> {
         let wire =
-            vcd_writer.add_wire(signal.width.into(), format!("sig_{}", signal.id).as_str())?;
+            vcd_writer.add_wire(signal.width as u32, &signal.name)?;
 
         Ok(VcdSignal {
             wire,
-            unknown: vec![VcdValue::X; signal.width.into()],
+            unknown: vec![VcdValue::X; signal.width],
             data: signal
-                .buffer
+                .samples
                 .iter()
                 .map(|v| {
                     v.iter()
@@ -44,12 +46,12 @@ impl VcdSignal {
 
 /// Write the measured data to a VCD file
 ///
-/// * `signals` - Each signal measured, encoded as a `DataPacket`s
+/// * `signals` - The signal cluster to write to a VCD file
 /// * `identifier` - The collective name of the signals
 /// * `path` - Path to the write to write too, will overwrite any file already in place
 pub fn write_to_vcd<P: AsRef<Path>>(
-    signals: &Vec<DataPacket>,
-    identifier: &str,
+    signals: &SignalCluster,
+    config: &IlaConfig,
     path: P,
 ) -> IoResult<()> {
     let file = std::fs::File::options()
@@ -62,8 +64,9 @@ pub fn write_to_vcd<P: AsRef<Path>>(
 
     // Header
     vcd_writer.timescale(1, vcd::TimescaleUnit::US)?;
-    vcd_writer.add_module(identifier)?;
+    vcd_writer.add_module(&config.toplevel)?;
     let wires: Vec<VcdSignal> = signals
+        .cluster
         .iter()
         .filter_map(|signal| VcdSignal::from_vcd(&mut vcd_writer, signal).ok())
         .collect();
@@ -79,8 +82,9 @@ pub fn write_to_vcd<P: AsRef<Path>>(
 
     // Actual change value part
     let max_sample_count = signals
+        .cluster
         .iter()
-        .map(|b| b.buffer.len())
+        .map(|b| b.samples.len())
         .max()
         .ok_or(std::io::ErrorKind::InvalidData)?;
 

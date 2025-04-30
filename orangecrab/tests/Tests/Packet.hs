@@ -51,13 +51,7 @@ dataPackedModel i = out
     [0x00, 0x01]
       DL.++
       -- Id
-      [0x00, 0x00]
-      DL.++
-      -- Width
-      (toList $ convertWord width)
-      DL.++
-      -- Length
-      (toList $ convertDouble len)
+      [0x00, 0x00, 0x00, 0x00]
 
   byteSequence w =
     header (resize . pack $ (DL.length w) * widthInBytes)
@@ -93,9 +87,7 @@ dataPackedModel i = out
     go =
       padBytes
         IlaDataHeader
-          { length = unpack . resize . pack $ DL.length w * widthInBytes
-          , width = unpack . resize . pack $ width
-          , id = 0x0000
+          { hash = 0x00000000
           , version = 0x0001
           }
         <$> DL.zip isLast chopped
@@ -116,9 +108,10 @@ testbenchDataPacket ::
   , 1 <= BitSize a
   , 1 <= maxLength
   ) =>
+  SNat maxLength ->
   [[a]] ->
-  [Maybe (PacketStreamM2S (BitSize a `DivRU` 8) (BitVector 16, Index maxLength))]
-testbenchDataPacket i = go
+  [Maybe (PacketStreamM2S (BitSize a `DivRU` 8) ())]
+testbenchDataPacket _ i = go
  where
   widthInBytes :: Int
   widthInBytes = natToNum @(BitSize a `DivRU` 8)
@@ -126,22 +119,22 @@ testbenchDataPacket i = go
   toPacket ::
     Index maxLength ->
     (Index maxLength, a) ->
-    PacketStreamM2S (BitSize a `DivRU` 8) (BitVector 16, Index maxLength)
+    PacketStreamM2S (BitSize a `DivRU` 8) ()
   toPacket len (idx, num) =
     PacketStreamM2S
       { _abort = False
-      , _meta = (0, len)
+      , _meta = ()
       , _last = if idx == len - 1 then Just (unpack . resize . pack $ widthInBytes) else Nothing
       , _data = convertBytes num
       }
 
-  convList :: [a] -> [PacketStreamM2S (BitSize a `DivRU` 8) (BitVector 16, Index maxLength)]
+  convList :: [a] -> [PacketStreamM2S (BitSize a `DivRU` 8) ()]
   convList l = toPacket (unpack . resize . pack $ DL.length l) <$> DL.zip [0 ..] l
 
-  package :: [a] -> [Maybe (PacketStreamM2S (BitSize a `DivRU` 8) (BitVector 16, Index maxLength))]
+  package :: [a] -> [Maybe (PacketStreamM2S (BitSize a `DivRU` 8) ())]
   package l = (Just <$> convList l)
 
-  go :: [Maybe (PacketStreamM2S (BitSize a `DivRU` 8) (BitVector 16, Index maxLength))]
+  go :: [Maybe (PacketStreamM2S (BitSize a `DivRU` 8) ())]
   go = DL.concatMap package i
 
 structureProperty :: Property
@@ -157,9 +150,9 @@ structureProperty = property $ do
   let simulated =
         DL.take (DL.length expected) $
           simulateC
-            (toSimulate dataPacket (DD.Proxy :: DD.Proxy (Unsigned 9)))
+            (toSimulate $ dataPacket 0)
             simOptions
-            (testbenchDataPacket @25 input)
+            (testbenchDataPacket d25 input)
 
   simulated === expected
 
