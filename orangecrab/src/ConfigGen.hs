@@ -33,9 +33,11 @@ import Data.String.Interpolate (__i)
 import GHC.Stack (HasCallStack, callStack, prettyCallStack)
 import Prettyprinter
 import Prelude qualified as P
+import Clash.Primitives.DSL qualified as DSL
 
 import Data.Data
-import Data.List
+import Data.Monoid (Ap(getAp))
+import Data.Word (Word32)
 
 {- | From a tuple consisting of a signal and a string, grab the bit width of the signal and put it
 in a vector. At the same time, bundle every signal together.
@@ -106,6 +108,8 @@ Example:
 ilaProbe :: forall dom t. (HiddenClockResetEnable dom, LabelledSignals t 0 dom ()) => t
 ilaProbe = ilaProbe' (Nil, pure () :: Signal dom ())
 
+-- deriving instance (Hashable a, KnownNat n, b ~ n + 1) => Hashable (Vec b a)
+
 -- | Write signal information to a file, using blackboxes
 writeSignalInfo ::
   forall dom n s.
@@ -118,7 +122,7 @@ writeSignalInfo ::
   Vec n (Int, String) ->
   -- | The hash of the JSON
   BitVector 32
-writeSignalInfo !_toplevel !_bufSize !_sigInfo = 0 :: BitVector 32
+writeSignalInfo !_toplevel !_bufSize !_sigInfo = 0
 {-# OPAQUE writeSignalInfo #-}
 {-# ANN writeSignalInfo hasBlackBox #-}
 {-# ANN
@@ -147,11 +151,11 @@ signalInfoBBF _ _ args _ = Control.Lens.view tcCache >>= go
     , [_, (coreView tcm -> LitTy (NumTy n)), (coreView tcm -> LitTy (NumTy s))] <- rights args
     , Just (SomeNat (Proxy :: Proxy n)) <- someNatVal n
     , Just (SomeNat (Proxy :: Proxy s)) <- someNatVal s =
-        mkBlackBox $ GenIlas [getGenIla @n toplevel (SNat @s) (getSigInfo sigInfo)]
+        mkBlackBox $ getGenIla @n toplevel (SNat @s) (getSigInfo sigInfo)
     | otherwise = errorX "Improper data given, expected Vec n (Int, String)"
 
   -- \| Make the actual blackbox
-  mkBlackBox input = pure $ Right (blackBoxMeta input, blackBox)
+  mkBlackBox input = pure $ Right (blackBoxMeta input, blackBox input)
 
   -- \| Coerce a `Term` back into a type
   -- Panics on failure
@@ -178,18 +182,21 @@ signalInfoBBF _ _ args _ = Control.Lens.view tcCache >>= go
     GenIla
       { toplevel = coerceToType toplevel "toplevel name"
       , bufferSize = snatToNum bufSize
-      , hash = 0
+      , hash = fromIntegral $ hash
+        ( coerceToType toplevel "toplevel name" :: String
+        , snatToInteger bufSize
+        , toList sigInfo
+        )
       -- The reverse is needed as the polyvariadic function builds up the vector in reverse order
       , signals = P.reverse $ toList $ toGenSignal <$> sigInfo
       }
 
   -- \| Meta information about the blackbox
   -- We abuse the `bbIncludes` feature to write our ILA configuration to a JSON file
-  blackBoxMeta :: GenIlas -> BlackBoxMeta
+  blackBoxMeta :: GenIla -> BlackBoxMeta
   blackBoxMeta sizes =
     emptyBlackBoxMeta
-      { bbKind = TDecl
-      , bbRenderVoid = RenderVoid
+      { bbKind = Clash.Netlist.BlackBox.Types.TExpr
       , bbIncludes =
           [
             ( ("ilaconf", "json")
@@ -199,21 +206,35 @@ signalInfoBBF _ _ args _ = Control.Lens.view tcCache >>= go
       }
 
   -- \| The blackbox itself, which we don't use as we only want to write to meta files
-  blackBox :: BlackBox
-  blackBox = BBFunction (show 'renderHDLTF) 0 renderHDLTF
+  blackBox :: GenIla -> BlackBox
+  blackBox sizes = BBFunction (show 'renderHDLTF) 0 (renderHDLTF sizes)
 {-# NOINLINE signalInfoBBF #-}
 
 {- | Template function to generate HDL
 As we only want to write JSON, this is simply an empty string
 -}
-renderHDLTF :: (HasCallStack) => TemplateFunction
-renderHDLTF = TemplateFunction [] (const True) (\_ -> pure "")
+renderHDLTF :: (HasCallStack) => GenIla -> TemplateFunction
+renderHDLTF args = TemplateFunction [] (const True) (renderHDL args)
 {-# NOINLINE renderHDLTF #-}
 
 -- | Template function to generate JSON
-renderJSONTF :: (HasCallStack) => GenIlas -> TemplateFunction
+renderJSONTF :: (HasCallStack) => GenIla -> TemplateFunction
 renderJSONTF args = TemplateFunction [] (const True) (renderJSON args)
 {-# NOINLINE renderJSONTF #-}
+
+-- | Calculate the hash over the file contents and return it as a number
+renderHDL ::
+  forall s.
+  ( HasCallStack
+  , Backend s
+  ) =>
+  -- | The Ilas to encode to get the hash from
+  GenIla ->
+  -- | Unused
+  BlackBoxContext ->
+  -- | The output JSON content
+  State s (Doc ())
+renderHDL ila _ = getAp $ expr True (DSL.bvLit 32 $ toInteger ila.hash).eex
 
 -- | Actually render JSON
 renderJSON ::
@@ -222,14 +243,12 @@ renderJSON ::
   , Backend s
   ) =>
   -- | The Ilas to encode to JSON
-  GenIlas ->
+  GenIla ->
   -- | Unused
   BlackBoxContext ->
   -- | The output JSON content
   State s (Doc ())
-renderJSON args _ = pure [__i|#{encoded}|]
- where
-  encoded = encode args
+renderJSON ila _ = pure [__i|#{encode ila}|]
 {-# NOINLINE renderJSON #-}
 
 ilaConfig ::
@@ -288,14 +307,9 @@ fromGenSignal s = (s.width, s.name)
 -- | Individual ILA JSON representation
 data GenIla = GenIla
   { toplevel :: String
-  , bufferSize :: Int
-  , hash :: Int
+  , bufferSize :: Word32
+  , hash :: Word32
   , signals :: [GenSignal]
   }
   deriving (Generic, Show, ToJSON, Eq, Hashable)
 
--- | Toplevel of the JSON file
-data GenIlas = GenIlas
-  { ilas :: [GenIla]
-  }
-  deriving (Generic, Show, ToJSON, Eq, Hashable)
