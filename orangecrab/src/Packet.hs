@@ -56,23 +56,23 @@ instance IlaPacketType IlaDataHeader where
 
 -- | Construct a data packet from a stream of raw data
 dataPacket ::
-  forall dom dataWidth size.
+  forall dom dataWidth.
   ( HiddenClockResetEnable dom
   , KnownNat dataWidth
-  , KnownNat size
   , 1 <= dataWidth
-  , 1 <= size
   ) =>
+  -- | ILA Hash
+  BitVector 32 ->
   -- | Circuit which takes in a datastream with the length as metadata and outputs packaged data
   Circuit
-    (PacketStream dom dataWidth (BitVector 32, Index size))
+    (PacketStream dom dataWidth ())
     (PacketStream dom dataWidth IlaDataHeader)
-dataPacket = packetizerC headerTransfer headerTransfer
+dataPacket hash = packetizerC headerTransfer headerTransfer
  where
-  headerTransfer oldMeta =
+  headerTransfer _ =
     IlaDataHeader
       { version = 0x0001
-      , hash = fst oldMeta
+      , hash = hash
       }
 
 {- | Finalize a ILA packet

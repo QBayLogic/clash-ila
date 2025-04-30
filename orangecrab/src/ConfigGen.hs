@@ -31,9 +31,10 @@ writeConfig ::
   , NamedSignal ts
   , Lift a
   ) =>
-  -- | How many samples should it capture of each signal?
+  -- | The amount of samples it can store in its buffer
   SNat n ->
   -- | Merely an identifier, recommended to be the name of the toplevel design, but it can be any name you fancy
+  -- Used as the toplevel name in the VCD file
   String ->
   -- | A list of signals and labels (Strings) tupled together to sample
   HList ts ->
@@ -42,16 +43,17 @@ writeConfig ::
   -- | a `IlaConfig` in AST form, this should be passed directly to the ILA
   IO (Exp)
 writeConfig size toplevelName namedSignals bundledSignals = do
-  let sizeNames = getSizeAndName namedSignals
+  let
+    sizeNames = getSizeAndName namedSignals
 
-  let genSignals = (uncurry $ flip GenSignal) <$> sizeNames
+    genSignals = (uncurry $ flip GenSignal) <$> sizeNames
 
-  let nonHashed = GenIla toplevelName (natToNum @n) 0 genSignals
-  let hashValue = hash nonHashed
-  let hashValueBv = resize $ pack hashValue :: BitVector 32
-  let hashedIla = GenIla toplevelName (natToNum @n) hashValue genSignals
+    nonHashed = GenIla toplevelName (natToNum @n) 0 genSignals
+    hashValue = hash nonHashed
+    hashValueBv = resize $ pack hashValue :: BitVector 32
+    hashedIla = GenIla toplevelName (natToNum @n) hashValue genSignals
 
-  let genIlas = GenIlas [hashedIla]
+    genIlas = GenIlas [hashedIla]
 
   encodeFile "ilaconf.json" genIlas
 
@@ -65,15 +67,15 @@ writeConfig size toplevelName namedSignals bundledSignals = do
   [|ilaConf|]
 
 ilaConfig ::
-  forall dom a n ts.
-  ( KnownNat n
+  forall dom a depth ts.
+  ( KnownNat depth
   , NamedSignal ts
   , Lift a
   ) =>
-  -- | How many samples should it capture of each signal?
-  SNat n ->
-  -- | How many samples after triggering should it still capture?
-  Index n ->
+  -- | Number of samples it can capture
+  SNat depth ->
+  -- | Number of samples it captures after triggering
+  Index depth ->
   -- | Merely an identifier, recommended to be the name of the toplevel design, but it can be any name you fancy
   String ->
   -- | A list of signals and labels (Strings) tupled together to sample
@@ -81,7 +83,7 @@ ilaConfig ::
   -- | The same list of signals, but then bundled together
   Signal dom a ->
   -- | The ILA configuration itself
-  IlaConfig n (Signal dom a)
+  IlaConfig depth (Signal dom a)
 ilaConfig size triggerPoint toplevelName namedSignals bundledSignals =
   IlaConfig
     { hash = 0
@@ -97,7 +99,7 @@ data IlaConfig n a = IlaConfig
   , size :: SNat n
   -- ^ Size of the buffers, aka; how many samples should it capture
   , triggerPoint :: Index n
-  -- ^ How many samples *after* triggering it should sample
+  -- ^ The amount of samples it stores *after* triggering
   , tracing :: a
   -- ^ The signal to trace
   }

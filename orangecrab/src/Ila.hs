@@ -96,10 +96,9 @@ triggerController config predicate core = Circuit exposeIn
     shouldSample :: Signal dom Bool
     shouldSample = not <$> triggered .||. postTriggerSampled .<. triggerPoint
 
-    injectId oldMeta = (config.hash, oldMeta)
 
     buffer = core config.tracing shouldSample triggerRst
-    Circuit packet = dataPacket <| mapMeta injectId <| ringBufferReaderPS buffer
+    Circuit packet = dataPacket config.hash <| mapMeta (\_ -> ()) <| ringBufferReaderPS buffer
 
     out = ((pure (), pure ()), snd $ packet (triggered, backpressure))
 
@@ -107,7 +106,7 @@ triggerController config predicate core = Circuit exposeIn
 fanoutCSig ::
   forall dom n a.
   (KnownNat n) =>
-  -- | How many times to 'duplicate' the signal
+  -- | The amount of times to 'duplicate' the signal
   SNat n ->
   -- | The circuit, where the input will be duplicated n times and returned as the output
   Circuit
@@ -190,10 +189,10 @@ ila ::
     (CSignal dom (Maybe (BitVector 8)))
     (PacketStream dom (BitSize a `DivRU` 8) IlaFinalHeader)
 ila config predicate = circuit $ \rxByte -> do
-  [dec0, dec1] <- fanoutCSig d2 <| deserializeToPacket -< rxByte
+  Fwd dec <- deserializeToPacket -< rxByte
 
-  triggerReset <- rearmTrigger -< dec0
-  hasNewTrigger <- changeTriggerPoint -< dec1
+  triggerReset <- rearmTrigger -< Fwd dec
+  hasNewTrigger <- changeTriggerPoint -< Fwd dec
 
   controller <-
     (triggerController config predicate $ ilaCore config.size (pure True))
