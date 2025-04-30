@@ -3,7 +3,7 @@ use std::{io::Result as IoResult, path::Path};
 use vcd::{IdCode, SimulationCommand, Value as VcdValue};
 
 use crate::packet::*;
-use crate::config::{IlaConfig, IlaConfigurations, IlaSignal};
+use crate::config::IlaConfig;
 
 type VcdWriter = vcd::Writer<std::io::BufWriter<std::fs::File>>;
 type VcdBitVec = Vec<VcdValue>;
