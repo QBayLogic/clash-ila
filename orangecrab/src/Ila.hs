@@ -1,13 +1,18 @@
+{-# LANGUAGE DuplicateRecordFields #-}
+{-# LANGUAGE OverloadedRecordDot #-}
+{-# LANGUAGE NoFieldSelectors #-}
 {-# OPTIONS_GHC -fconstraint-solver-iterations=10 #-}
 {-# OPTIONS_GHC -fplugin=Protocols.Plugin #-}
 
 module Ila where
 
 import Clash.Prelude
+import ConfigGen
 import Packet
 import RingBuffer
 
 import Data.Data
+import Data.Maybe as DM
 
 import Protocols
 import Protocols.PacketStream
@@ -60,10 +65,10 @@ triggerController ::
   , 1 <= BitSize a `DivRU` 8
   , 1 <= size
   ) =>
+  -- | The configuration of the ILA
+  IlaConfig size (Signal dom a) ->
   -- | Trigger predicate
   (a -> Bool) ->
-  -- | The input signal to probe
-  Signal dom a ->
   -- | The ILA Core
   ( Signal dom a ->
     Signal dom Bool ->
@@ -73,26 +78,88 @@ triggerController ::
   -- | Circuit outputting the content of the buffer whenever the predicate has been triggered
   -- The input signal is to clear the trigger
   Circuit
-    (CSignal dom Bool)
+    (CSignal dom (Maybe (Index size)), CSignal dom Bool)
     (PacketStream dom (BitSize a `DivRU` 8) IlaDataHeader)
-triggerController predicate i core = Circuit exposeIn
+triggerController config predicate core = Circuit exposeIn
  where
-  exposeIn (triggerRst, backpressure) = out
+  exposeIn ((newTrigPoint, triggerRst), backpressure) = out
    where
-    oldTriggered :: Signal dom Bool
-    oldTriggered = register False triggered
+    triggerPoint = register config.triggerPoint $ liftA2 DM.fromMaybe triggerPoint newTrigPoint
+
+    postTriggerSampled :: Signal dom (Index size)
+    postTriggerSampled = register 0 $ mux triggered (satAdd SatBound 1 <$> postTriggerSampled) 0
+
     triggered :: Signal dom Bool
-    triggered = mux triggerRst (pure False) oldTriggered .||. (predicate <$> i)
+    triggered =
+      register False $ mux triggerRst (pure False) triggered .||. (predicate <$> config.tracing)
 
     shouldSample :: Signal dom Bool
-    shouldSample = not <$> triggered
+    shouldSample = not <$> triggered .||. postTriggerSampled .<. triggerPoint
 
-    injectId oldMeta = (0, oldMeta)
 
-    buffer = core i shouldSample triggerRst
-    Circuit packet = dataPacket (Proxy :: Proxy a) <| mapMeta injectId <| ringBufferReaderPS buffer
+    buffer = core config.tracing shouldSample triggerRst
+    Circuit packet = dataPacket config.hash <| mapMeta (\_ -> ()) <| ringBufferReaderPS buffer
 
-    out = (pure (), snd $ packet (triggered, backpressure))
+    out = ((pure (), pure ()), snd $ packet (triggered, backpressure))
+
+-- | A signal fanout, simply duplicates a signal n times
+fanoutCSig ::
+  forall dom n a.
+  (KnownNat n) =>
+  -- | The amount of times to 'duplicate' the signal
+  SNat n ->
+  -- | The circuit, where the input will be duplicated n times and returned as the output
+  Circuit
+    (CSignal dom a)
+    (Vec n (CSignal dom a))
+fanoutCSig _ = Circuit go
+ where
+  go (fwd, _) = (pure (), repeat fwd)
+
+-- | Checks if an incoming packet should re-arm the the trigger (reset the trigger)
+rearmTrigger ::
+  forall dom.
+  (HiddenClockResetEnable dom) =>
+  -- | The circuit, input is the incoming packet (if there is one) and the output returns a bool
+  -- indicating wether or not it should re-arm the trigger
+  Circuit
+    (CSignal dom (Maybe IlaIncomingPacket))
+    (CSignal dom Bool)
+rearmTrigger = Circuit exposeIn
+ where
+  exposeIn (fwdIn, _) = out
+   where
+    rearm (Just IlaResetTrigger) = True
+    rearm _ = False
+
+    out = (pure (), rearm <$> fwdIn)
+
+{- | Checks if an incoming packet should change the trigger point of the ILA, and if it should
+what index should it reset at?
+
+NOTE: due to the `IlaChangeTriggerPoint` using a bv32, values bigger than the buffer `size` itself
+will be truncated on a bit level. That may result in some unexpected values, the simple solution
+is to not send out values bigger than `size`
+-}
+changeTriggerPoint ::
+  forall dom size.
+  ( HiddenClockResetEnable dom
+  , KnownNat size
+  , 1 <= size
+  ) =>
+  -- The circuit, input is an incoming packet (if there is one) and the output is the new trigger
+  -- point, if the packet is a `IlaChangeTriggerPoint`, otherwise returns `Nothing`
+  Circuit
+    (CSignal dom (Maybe IlaIncomingPacket))
+    (CSignal dom (Maybe (Index size)))
+changeTriggerPoint = Circuit exposeIn
+ where
+  exposeIn (fwdIn, _) = out
+   where
+    newTrigger (Just (IlaChangeTriggerPoint new)) = Just $ unpack . resize $ pack new
+    newTrigger _ = Nothing
+
+    out = (pure (), newTrigger <$> fwdIn)
 
 {- | The ILA component itself
 
@@ -110,15 +177,26 @@ ila ::
   , 1 <= BitSize a `DivRU` 8
   , 1 <= size
   ) =>
-  -- | Maximum sample count
-  SNat size ->
+  -- | The configuration of the ILA
+  IlaConfig size (Signal dom a) ->
   -- | Trigger predicate
   (a -> Bool) ->
-  -- | Signal to probe
-  Signal dom a ->
-  -- | Circuit outputting the content of the buffer whenever the predicate has been triggered
-  -- The input signal is to clear the trigger
+  -- | The ILA circuit, the input needs to be connected to some sort of byte input and the output
+  -- is a PacketStream containing bytes to be routed to the PC.
+  --
+  -- TODO: example? Not added one yet due to possible change in API
   Circuit
-    (CSignal dom Bool)
+    (CSignal dom (Maybe (BitVector 8)))
     (PacketStream dom (BitSize a `DivRU` 8) IlaFinalHeader)
-ila size predicate sig = finalizePacket <| (triggerController predicate sig $ ilaCore size (pure True))
+ila config predicate = circuit $ \rxByte -> do
+  Fwd dec <- deserializeToPacket -< rxByte
+
+  triggerReset <- rearmTrigger -< Fwd dec
+  hasNewTrigger <- changeTriggerPoint -< Fwd dec
+
+  controller <-
+    (triggerController config predicate $ ilaCore config.size (pure True))
+      -< (hasNewTrigger, triggerReset)
+  packets <- finalizePacket -< controller
+
+  idC -< packets

@@ -4,8 +4,10 @@ use std::path::PathBuf;
 use clap::{Args, Parser, Subcommand};
 use serialport::SerialPort;
 
+mod config;
 mod packet;
 mod vcd;
+mod tui;
 
 #[derive(Parser, Debug)]
 #[command(version, about)]
@@ -19,6 +21,8 @@ struct Cli {
 enum Subcommands {
     /// Generate a VCD dump from incoming signals
     Vcd(VcdArgs),
+    /// Enter the TUI interface
+    Tui(TuiArgs),
     /// Analyse incoming packets and attempt to parse them according to packet formats
     Analysis(AnalysisArgs),
     /// Monitor output of the port, all data is displayed in hex
@@ -53,9 +57,34 @@ struct MonitorArgs {
 }
 
 #[derive(Args, Debug)]
+struct TuiArgs {
+    #[arg(short, long, help = "Path to serial port to use")]
+    port: PathBuf,
+
+    #[arg(
+        short = 'c',
+        long,
+        default_value = "ilaconf.json",
+        help = "Path to config file"
+    )]
+    config: PathBuf,
+
+    #[arg(short, long, default_value_t = 9600, help = "Sets baud rate")]
+    baud: u32,
+}
+
+#[derive(Args, Debug)]
 struct AnalysisArgs {
     #[arg(short, long, help = "Path to serial port to use")]
     port: PathBuf,
+
+    #[arg(
+        short = 'c',
+        long,
+        default_value = "ilaconf.json",
+        help = "Path to config file"
+    )]
+    config: PathBuf,
 
     #[arg(short, long, default_value_t = 9600, help = "Sets baud rate")]
     baud: u32,
@@ -68,6 +97,14 @@ struct VcdArgs {
 
     #[arg(short = 'o', long, help = "Path to output the VCD file")]
     path: PathBuf,
+
+    #[arg(
+        short = 'c',
+        long,
+        default_value = "ilaconf.json",
+        help = "Path to config file"
+    )]
+    config: PathBuf,
 
     #[arg(short, long, default_value_t = String::from("TopLevel"), help = "The name of the toplevel to display in the VCD")]
     toplevel: String,
@@ -99,6 +136,24 @@ impl ParseSubcommand for MonitorArgs {
     fn parse(self) {
         let port = find_specified_port(&self.port, self.baud);
         monitor_port(port, self)
+    }
+}
+
+impl ParseSubcommand for TuiArgs {
+    fn parse(self) {
+        let rx_port = find_specified_port(&self.port, self.baud);
+        let mut tx_port = rx_port.try_clone()
+            .expect("Couldn't open port for writing");
+        let configs = config::read_config(&self.config)
+            .expect(&format!("File at {:?} contained errors", &self.config));
+        let config = configs.ilas[0].clone();
+
+        let Ok(mut session) = tui::TuiSession::new(&config) else { return };
+
+        let rx = packet::packet_loop(rx_port.bytes(), config.clone());
+        tx_port.write(&[1, 2, 3, 4, 5, 6]);
+
+        session.main_loop(rx, tx_port);
     }
 }
 
@@ -169,13 +224,18 @@ fn monitor_port(port: Box<dyn SerialPort>, args: MonitorArgs) {
 }
 
 /// `analysis` CLI handler
-fn packet_analysis(port: Box<dyn SerialPort>, _: AnalysisArgs) {
+fn packet_analysis(port: Box<dyn SerialPort>, args: AnalysisArgs) {
     println!(
         "Analysing packets on {}",
         port.name().unwrap_or(String::from("<unknown>"))
     );
 
-    let rx = packet::packet_loop(port.bytes());
+    //TODO: MAKE THIS A LOOP FOR EACH ILA INSTEAD OF JUST USING THE FIRST ONE!!!!
+    let configs = config::read_config(&args.config)
+        .expect(&format!("File at {:?} contained errors", &args.config));
+    let config = configs.ilas[0].clone();
+
+    let rx = packet::packet_loop(port.bytes(), config);
     for packet in rx {
         println!("Valid packet recieved: {packet:?}");
     }
@@ -188,17 +248,21 @@ fn vcd_dump(port: Box<dyn SerialPort>, args: VcdArgs) {
         port.name().unwrap_or(String::from("<unknown>"))
     );
 
-    let rx = packet::packet_loop(port.bytes());
+    //TODO: MAKE THIS A LOOP FOR EACH ILA INSTEAD OF JUST USING THE FIRST ONE!!!!
+    let configs = config::read_config(&args.config)
+        .expect(&format!("File at {:?} contained errors", &args.config));
+    let config = configs.ilas[0].clone();
+
+    let rx = packet::packet_loop(port.bytes(), config.clone());
     let mut rx_iter = rx.iter();
 
-    let packet = loop {
-        if let Some(packet::Packets::Data(packet)) = rx_iter.next() {
-            break packet;
+    let signals = loop {
+        if let Some(packet::Packets::Data(signals)) = rx_iter.next() {
+            break signals;
         }
     };
 
-    vcd::write_to_vcd(&vec![packet], &args.toplevel, args.path)
-        .expect("Failed to generate VCD file")
+    vcd::write_to_vcd(&signals, &config, args.path).expect("Failed to generate VCD file");
 }
 
 fn main() {
@@ -208,6 +272,7 @@ fn main() {
         Subcommands::Vcd(args) => args.parse(),
         Subcommands::Analysis(args) => args.parse(),
         Subcommands::Monitor(args) => args.parse(),
+        Subcommands::Tui(args) => args.parse(),
         Subcommands::List => {
             let ports = match serialport::available_ports() {
                 Ok(ports) => ports,
