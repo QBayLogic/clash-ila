@@ -8,7 +8,7 @@ use crossterm::{
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
-use tui::{
+use ratatui::{
     backend::CrosstermBackend,
     layout::{Constraint, Layout, Margin, Rect},
     style::Style,
@@ -181,7 +181,7 @@ impl<'a> TuiSession<'a> {
     /// Render the TUI
     pub fn render(&mut self) {
         let _ = self.term.draw(|f| {
-            let size = f.size();
+            let size = f.area();
             let title_block = Block::default()
                 .title("ILA - Port /dev/???")
                 .borders(Borders::ALL);
@@ -193,7 +193,7 @@ impl<'a> TuiSession<'a> {
                     Constraint::Length(KEYBIND_TEXT.lines().count() as u16 + 2),
                     Constraint::Min(1),
                 ])
-                .split(size.inner(&Margin {
+                .split(size.inner(Margin {
                     vertical: 1,
                     horizontal: 1,
                 }));
@@ -207,13 +207,10 @@ impl<'a> TuiSession<'a> {
             // If a string spans multiple lines / overflows, too bad*!*
             self.log = self
                 .log
-                .iter()
-                .cloned() // Ugly clone, but we can't avoid it due to
-                // the &mut of self
-                .skip(
+                .drain(
                     self.log
                         .len()
-                        .saturating_sub(info_layout[1].height as usize),
+                        .saturating_sub(info_layout[1].height as usize)..,
                 )
                 .collect();
 
@@ -300,7 +297,7 @@ impl<'a> TuiSession<'a> {
                 // Handle the case of whenever a prompt gets completed
                 // I want to move this to a seperate function, however due to borrow limits I can't
                 // and that's kind of very annoying
-                
+
                 match prompt.reason {
                     PromptReason::SaveVcd => {
                         if let Some(sample) = self.captured.last() {
@@ -316,24 +313,23 @@ impl<'a> TuiSession<'a> {
                         }
                     }
                     PromptReason::ChangeTrigger => {
-                        // Nested if's
-                        // YUCK
-                        // Can't really break out of it either, due to the state change later
-                        // Raaaugh
-                        if let Ok(n) = prompt.input.parse() {
-                            if n > self.config.buffer_size as u32 {
+                        match prompt.input.parse() {
+                            Ok(n) if n > self.config.buffer_size as u32 => {
                                 self.log
                                     .push(format!("Invalid input; must be specified range"));
-                            } else {
+                            }
+                            Ok(n) => {
                                 self.log
                                     .push(match send_packet(tx_port, &ChangeTriggerPoint(n)) {
                                         Ok(_) => String::from("Trigger point change made"),
                                         Err(err) => format!("Error: {err}"),
                                     });
                             }
-                        } else {
-                            self.log
-                                .push(format!("Invalid input; must be a unsigned 32 bit number"));
+                            Err(_) => {
+                                self.log.push(format!(
+                                    "Invalid input; must be a unsigned 32 bit number"
+                                ));
+                            }
                         }
                     }
                 }

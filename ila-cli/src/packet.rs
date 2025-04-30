@@ -38,8 +38,7 @@ impl ByteIterReads for std::slice::Iter<'_, u8> {
     }
 
     fn next_n(&mut self, n: usize) -> Option<Vec<u8>> {
-        let mut v = Vec::new();
-        v.reserve_exact(n);
+        let mut v = Vec::with_capacity(n);
         for _ in 0..n {
             v.push(*self.next()?);
         }
@@ -110,13 +109,11 @@ pub struct SignalCluster {
 
 impl RawDataPacket {
     fn into_signals(&self, config: &IlaConfig, monitor_start: Instant) -> Option<SignalCluster> {
-        // Not quite sure if this is considered ugly, it's a nice oneliner, but god is it abusing
-        // syntax
-        let true = self.hash == config.hash else {
+        if self.hash != config.hash {
             return None;
-        };
+        }
 
-        let bitvecs: Vec<BitVec<u8, Msb0>> = self
+        let bitvecs = self
             .buffer
             .chunks(config.transaction_byte_count())
             .map(|chunk| {
@@ -124,9 +121,8 @@ impl RawDataPacket {
                     .view_bits::<Msb0>()
                     .iter()
                     .skip(chunk.len() * 8 - config.transaction_bit_count())
-                    .collect()
-            })
-            .collect();
+                    .collect::<BitVec<u8, Msb0>>()
+            });
 
         let mut signals: Vec<Signal> = config
             .signals
@@ -171,7 +167,10 @@ pub fn find_preamble(data: &Vec<u8>) -> Option<usize> {
 
 /// Attempt to parse the input data as any form of packet, depending on the packet type ID
 pub fn get_packet(data: &Vec<u8>, config: &IlaConfig, monitor_start: Instant) -> Result<(Packets, usize), ParseErr> {
-    if data.len() < 5 {
+    const PACKET_HEADER_LENGTH: usize = 5;
+    const PACKET_HEADER_TYPE_INDEX: usize = 4;
+
+    if data.len() < PACKET_HEADER_LENGTH {
         return Err(ParseErr::NeedsMoreBytes);
     }
     match find_preamble(data) {
@@ -180,8 +179,8 @@ pub fn get_packet(data: &Vec<u8>, config: &IlaConfig, monitor_start: Instant) ->
         None => return Err(ParseErr::NoPreamble),
     }
 
-    let input_data = &data[5..];
-    match data[4] as u16 {
+    let input_data = &data[PACKET_HEADER_LENGTH..];
+    match data[PACKET_HEADER_TYPE_INDEX] as u16 {
         0x01 => {
             let (packet, leftover) = RawDataPacket::new(input_data, config)?;
             Ok((
