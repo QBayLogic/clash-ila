@@ -41,12 +41,7 @@ impl IlaConfig {
     }
 }
 
-#[derive(Clone, serde::Serialize, serde::Deserialize)]
-pub struct IlaConfigurations {
-    pub ilas: Vec<IlaConfig>
-}
-
-pub fn read_config<P>(path: P) -> std::io::Result<IlaConfigurations>
+pub fn read_config<P>(path: P) -> std::io::Result<IlaConfig>
 where 
     P: AsRef<Path>
 {

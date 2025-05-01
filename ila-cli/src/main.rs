@@ -32,11 +32,6 @@ enum Subcommands {
     List,
 }
 
-/// Simple trait to indicate this is a valid subcommand with arguments
-trait ParseSubcommand {
-    fn parse(self);
-}
-
 #[derive(Args, Debug)]
 struct MonitorArgs {
     #[arg(short, long, help = "Path to serial port to use")]
@@ -79,6 +74,11 @@ struct TuiArgs {
     baud: u32,
 }
 
+/// Simple trait to indicate this is a valid subcommand with arguments
+trait ParseSubcommand {
+    fn parse(self);
+}
+
 impl ParseSubcommand for MonitorArgs {
     fn parse(self) {
         let port = find_specified_port(&self.port, self.baud);
@@ -89,11 +89,10 @@ impl ParseSubcommand for MonitorArgs {
 impl ParseSubcommand for TuiArgs {
     fn parse(self) {
         let rx_port = find_specified_port(&self.port, self.baud);
-        let tx_port = rx_port.try_clone().expect("Couldn't open port for writing");
-        let configs = config::read_config(&self.config)
+        let tx_port = rx_port.try_clone()
+            .expect("Couldn't open port for writing");
+        let config = config::read_config(&self.config)
             .expect(&format!("File at {:?} contained errors", &self.config));
-        assert!(configs.ilas.len() == 1, "As of now, only one instantiated ILA is supported.");
-        let config = configs.ilas[0].clone();
 
         let Ok(mut session) = tui::TuiSession::new(&config) else {
             return;
@@ -111,13 +110,17 @@ impl ParseSubcommand for TuiArgs {
 ///
 /// Panics if the user provided an incorrect path or other IO errors accure
 fn find_specified_port(check: &PathBuf, baud: u32) -> Box<dyn SerialPort> {
-    let ports = serialport::available_ports().expect("Unable to iterate serial devices. Exiting.");
+    let ports = match serialport::available_ports() {
+        Ok(ports) => ports,
+        Err(err) => {
+            println!("Unable to qeury serial port information;");
+            println!("Kind: {:?}", err.kind);
+            println!("Reason: {}", err.description);
+            panic!("Unable to query serial port information.")
+        }
+    };
 
-    let canon = check
-        .as_path()
-        .canonicalize()
-        .expect("Invalid path provided");
-    let check_path = canon.as_os_str().to_string_lossy();
+    let check_path = check.display().to_string();
 
     let valid_port = ports
         .into_iter()
@@ -172,8 +175,15 @@ fn main() {
         Subcommands::Monitor(args) => args.parse(),
         Subcommands::Tui(args) => args.parse(),
         Subcommands::List => {
-            let ports =
-                serialport::available_ports().expect("Unable to iterate serial devices. Exiting.");
+            let ports = match serialport::available_ports() {
+                Ok(ports) => ports,
+                Err(err) => {
+                    println!("Unable to qeury serial port information;");
+                    println!("Kind: {:?}", err.kind);
+                    println!("Reason: {}", err.description);
+                    panic!("Unable to query serial port information.")
+                }
+            };
 
             println!("Available ports:");
             for port in ports {

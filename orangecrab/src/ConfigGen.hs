@@ -9,33 +9,29 @@
 module ConfigGen where
 
 import Clash.Prelude hiding (Exp, Type)
-
-import Data.Aeson
-
-import Data.Either
-import Data.Hashable
-
-import Text.Show.Pretty
+import Prelude qualified as P
 
 import Clash.Annotations.Primitive
 import Clash.Backend
 import Clash.Core.Term
 import Clash.Core.TermLiteral
 import Clash.Core.Type
-import Clash.Core.Var
-import Clash.Netlist.BlackBox
 import Clash.Netlist.BlackBox.Types
 import Clash.Netlist.Types
-import Clash.Primitives.DSL
-import Control.Lens qualified
-import Control.Monad.State
-import Data.String.Interpolate (__i)
-import GHC.Stack (HasCallStack, callStack, prettyCallStack)
-import Prettyprinter
-import Prelude qualified as P
+import Clash.Primitives.DSL qualified as DSL
 
-import Data.Data
-import Data.List
+import Control.Lens (view)
+import Control.Monad.State (State)
+import Data.String.Interpolate (__i)
+import GHC.Stack (HasCallStack)
+import Prettyprinter (Doc)
+
+import Data.Aeson (ToJSON, encode)
+import Data.Data (Proxy (Proxy))
+import Data.Either
+import Data.Hashable (Hashable, hash)
+import Data.Monoid (Ap (getAp))
+import Data.Word (Word32)
 
 {- | From a tuple consisting of a signal and a string, grab the bit width of the signal and put it
 in a vector. At the same time, bundle every signal together.
@@ -46,12 +42,13 @@ class LabelledSignals t n dom a where
   ilaProbe' :: (Vec n GenSignal, Signal dom a) -> t
 
 -- | Base case
-instance (KnownNat n, 1 <= n, m ~ n) => LabelledSignals (Vec m GenSignal, Signal dom a) n dom a where
+instance (KnownNat n, m ~ n, a ~ s) => LabelledSignals (Vec m GenSignal, Signal dom s) n dom a where
   ilaProbe' :: (Vec n GenSignal, Signal dom a) -> (Vec n GenSignal, Signal dom a)
   ilaProbe' acc = acc
 
 -- | Induction case
 instance
+  {-# OVERLAPPABLE #-}
   ( LabelledSignals cont (n + 1) dom nextS
   , BitPack a
   , nextS ~ (s, a)
@@ -74,37 +71,35 @@ instance
      in
       ilaProbe' (newAcc, newSig)
 
-{- | Finalize the polyvariadic function
-This function needs to be here to make GHC properly be able to infer the type.
-You can use `ilaProbe` without it, but then you'd have to explicitly mark the result type, which
-is a big pain to do.
--}
 instance
-  ( LabelledSignals final n dom s
-  , final ~ (Vec n GenSignal, Signal dom s)
+  ( LabelledSignals cont 1 dom a
+  , BitPack a
+  , nextS ~ a
   ) =>
-  LabelledSignals (() -> final) n dom s
+  LabelledSignals ((Signal dom a, String) -> cont) 0 dom s
   where
-  ilaProbe' :: (Vec n GenSignal, Signal dom s) -> () -> final
-  ilaProbe' acc _ = acc
+  ilaProbe' :: (Vec n GenSignal, Signal dom s) -> (Signal dom a, String) -> cont
+  ilaProbe' (Nil, _) (sig, label) = ilaProbe' (newAcc, sig)
+   where
+    newAcc :: Vec 1 GenSignal
+    newAcc =
+      GenSignal
+        { name = label
+        , width = natToNum @(BitSize a)
+        }
+        :> Nil
 
 {- | A polyvariadic function containing 'labelled signals', aka, a list of tuples where the left
-side is an arbitary signal, and the right a string. The final entry should always be an empty
-tuple `()`. This is so GHC can properly infer the type. Omitting the empty tuple will require
-you to explicitly mark out the result type.
+side is an arbitary signal, and the right a string. 
 
-The result of the function is intended to be forwarded to `IlaConfig`
-
-The result type is `(Vec n (Int, String), Signal dom a)`
-
-Example:
+# Example:
 
 >>> counter = register 0 $ counter + 1 :: Signal dom (Unsigned 8)
 >>> active = pure True :: Signal dom Bool
->>> ilaProbe (counter, "8 bit value") (active "system active") ()
+>>> ilaProbe (counter, "8 bit value") (active "system active")
 -}
-ilaProbe :: forall dom t. (HiddenClockResetEnable dom, LabelledSignals t 0 dom ()) => t
-ilaProbe = ilaProbe' (Nil, pure () :: Signal dom ())
+ilaProbe :: (LabelledSignals ((Signal dom a, b) -> t) 0 dom a) => (Signal dom a, b) -> t
+ilaProbe first@(f, _) = ilaProbe' (Nil, f) first
 
 -- | Write signal information to a file, using blackboxes
 writeSignalInfo ::
@@ -118,7 +113,7 @@ writeSignalInfo ::
   Vec n (Int, String) ->
   -- | The hash of the JSON
   BitVector 32
-writeSignalInfo !_toplevel !_bufSize !_sigInfo = 0 :: BitVector 32
+writeSignalInfo !_toplevel !_bufSize !_sigInfo = 0
 {-# OPAQUE writeSignalInfo #-}
 {-# ANN writeSignalInfo hasBlackBox #-}
 {-# ANN
@@ -140,18 +135,18 @@ writeSignalInfo !_toplevel !_bufSize !_sigInfo = 0 :: BitVector 32
 
 -- | The write signal blackbox function, grabs the AST from the context it gets invoked in
 signalInfoBBF :: (HasCallStack) => BlackBoxFunction
-signalInfoBBF _ _ args _ = Control.Lens.view tcCache >>= go
+signalInfoBBF _ _ args _ = view tcCache >>= go
  where
   go tcm
     | [_, toplevel, _, sigInfo] <- lefts args
     , [_, (coreView tcm -> LitTy (NumTy n)), (coreView tcm -> LitTy (NumTy s))] <- rights args
     , Just (SomeNat (Proxy :: Proxy n)) <- someNatVal n
     , Just (SomeNat (Proxy :: Proxy s)) <- someNatVal s =
-        mkBlackBox $ GenIlas [getGenIla @n toplevel (SNat @s) (getSigInfo sigInfo)]
+        mkBlackBox $ getGenIla @n toplevel (SNat @s) (getSigInfo sigInfo)
     | otherwise = errorX "Improper data given, expected Vec n (Int, String)"
 
   -- \| Make the actual blackbox
-  mkBlackBox input = pure $ Right (blackBoxMeta input, blackBox)
+  mkBlackBox input = pure $ Right (blackBoxMeta input, blackBox input)
 
   -- \| Coerce a `Term` back into a type
   -- Panics on failure
@@ -178,18 +173,23 @@ signalInfoBBF _ _ args _ = Control.Lens.view tcCache >>= go
     GenIla
       { toplevel = coerceToType toplevel "toplevel name"
       , bufferSize = snatToNum bufSize
-      , hash = 0
-      -- The reverse is needed as the polyvariadic function builds up the vector in reverse order
-      , signals = P.reverse $ toList $ toGenSignal <$> sigInfo
+      , hash =
+          fromIntegral
+            $ hash
+              ( coerceToType toplevel "toplevel name" :: String
+              , snatToInteger bufSize
+              , toList sigInfo
+              )
+      , -- The reverse is needed as the polyvariadic function builds up the vector in reverse order
+        signals = P.reverse $ toList $ toGenSignal <$> sigInfo
       }
 
   -- \| Meta information about the blackbox
   -- We abuse the `bbIncludes` feature to write our ILA configuration to a JSON file
-  blackBoxMeta :: GenIlas -> BlackBoxMeta
+  blackBoxMeta :: GenIla -> BlackBoxMeta
   blackBoxMeta sizes =
     emptyBlackBoxMeta
-      { bbKind = TDecl
-      , bbRenderVoid = RenderVoid
+      { bbKind = Clash.Netlist.BlackBox.Types.TExpr
       , bbIncludes =
           [
             ( ("ilaconf", "json")
@@ -199,21 +199,35 @@ signalInfoBBF _ _ args _ = Control.Lens.view tcCache >>= go
       }
 
   -- \| The blackbox itself, which we don't use as we only want to write to meta files
-  blackBox :: BlackBox
-  blackBox = BBFunction (show 'renderHDLTF) 0 renderHDLTF
+  blackBox :: GenIla -> BlackBox
+  blackBox sizes = BBFunction (show 'renderHDLTF) 0 (renderHDLTF sizes)
 {-# NOINLINE signalInfoBBF #-}
 
 {- | Template function to generate HDL
 As we only want to write JSON, this is simply an empty string
 -}
-renderHDLTF :: (HasCallStack) => TemplateFunction
-renderHDLTF = TemplateFunction [] (const True) (\_ -> pure "")
+renderHDLTF :: (HasCallStack) => GenIla -> TemplateFunction
+renderHDLTF args = TemplateFunction [] (const True) (renderHDL args)
 {-# NOINLINE renderHDLTF #-}
 
 -- | Template function to generate JSON
-renderJSONTF :: (HasCallStack) => GenIlas -> TemplateFunction
+renderJSONTF :: (HasCallStack) => GenIla -> TemplateFunction
 renderJSONTF args = TemplateFunction [] (const True) (renderJSON args)
 {-# NOINLINE renderJSONTF #-}
+
+-- | Calculate the hash over the file contents and return it as a number
+renderHDL ::
+  forall s.
+  ( HasCallStack
+  , Backend s
+  ) =>
+  -- | The Ilas to encode to get the hash from
+  GenIla ->
+  -- | Unused
+  BlackBoxContext ->
+  -- | The output JSON content
+  State s (Doc ())
+renderHDL ila _ = getAp $ expr True (DSL.bvLit 32 $ toInteger ila.hash).eex
 
 -- | Actually render JSON
 renderJSON ::
@@ -222,14 +236,12 @@ renderJSON ::
   , Backend s
   ) =>
   -- | The Ilas to encode to JSON
-  GenIlas ->
+  GenIla ->
   -- | Unused
   BlackBoxContext ->
   -- | The output JSON content
   State s (Doc ())
-renderJSON args _ = pure [__i|#{encoded}|]
- where
-  encoded = encode args
+renderJSON ila _ = pure [__i|#{encode ila}|]
 {-# NOINLINE renderJSON #-}
 
 ilaConfig ::
@@ -264,7 +276,7 @@ data IlaConfig n a = IlaConfig
   , size :: SNat n
   -- ^ Size of the buffers, aka; how many samples should it capture
   , triggerPoint :: Index n
-  -- ^ How many samples *after* triggering it should sample
+  -- ^ The amount of samples it stores *after* triggering
   , tracing :: a
   -- ^ The signal to trace
   }
@@ -288,14 +300,8 @@ fromGenSignal s = (s.width, s.name)
 -- | Individual ILA JSON representation
 data GenIla = GenIla
   { toplevel :: String
-  , bufferSize :: Int
-  , hash :: Int
+  , bufferSize :: Word32
+  , hash :: Word32
   , signals :: [GenSignal]
-  }
-  deriving (Generic, Show, ToJSON, Eq, Hashable)
-
--- | Toplevel of the JSON file
-data GenIlas = GenIlas
-  { ilas :: [GenIla]
   }
   deriving (Generic, Show, ToJSON, Eq, Hashable)
