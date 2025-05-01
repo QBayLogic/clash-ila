@@ -82,7 +82,6 @@ topLogicUart baud btns rx = go
                 (counter0, "c0")
                 (counter1, "c1")
                 (counter2, "c2")
-                ()
             )
         )
         ((==300) <$> counter0)

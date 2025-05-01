@@ -42,12 +42,13 @@ class LabelledSignals t n dom a where
   ilaProbe' :: (Vec n GenSignal, Signal dom a) -> t
 
 -- | Base case
-instance (KnownNat n, 1 <= n, m ~ n) => LabelledSignals (Vec m GenSignal, Signal dom a) n dom a where
+instance (KnownNat n, m ~ n, a ~ s) => LabelledSignals (Vec m GenSignal, Signal dom s) n dom a where
   ilaProbe' :: (Vec n GenSignal, Signal dom a) -> (Vec n GenSignal, Signal dom a)
   ilaProbe' acc = acc
 
 -- | Induction case
 instance
+  {-# OVERLAPPABLE #-}
   ( LabelledSignals cont (n + 1) dom nextS
   , BitPack a
   , nextS ~ (s, a)
@@ -70,39 +71,35 @@ instance
      in
       ilaProbe' (newAcc, newSig)
 
-{- | Finalize the polyvariadic function
-This function needs to be here to make GHC properly be able to infer the type.
-You can use `ilaProbe` without it, but then you'd have to explicitly mark the result type, which
-is a big pain to do.
--}
 instance
-  ( LabelledSignals final n dom s
-  , final ~ (Vec n GenSignal, Signal dom s)
+  ( LabelledSignals cont 1 dom a
+  , BitPack a
+  , nextS ~ a
   ) =>
-  LabelledSignals (() -> final) n dom s
+  LabelledSignals ((Signal dom a, String) -> cont) 0 dom s
   where
-  ilaProbe' :: (Vec n GenSignal, Signal dom s) -> () -> final
-  ilaProbe' acc _ = acc
+  ilaProbe' :: (Vec n GenSignal, Signal dom s) -> (Signal dom a, String) -> cont
+  ilaProbe' (Nil, _) (sig, label) = ilaProbe' (newAcc, sig)
+   where
+    newAcc :: Vec 1 GenSignal
+    newAcc =
+      GenSignal
+        { name = label
+        , width = natToNum @(BitSize a)
+        }
+        :> Nil
 
 {- | A polyvariadic function containing 'labelled signals', aka, a list of tuples where the left
-side is an arbitary signal, and the right a string. The final entry should always be an empty
-tuple `()`. This is so GHC can properly infer the type. Omitting the empty tuple will require
-you to explicitly mark out the result type.
+side is an arbitary signal, and the right a string. 
 
-The result of the function is intended to be forwarded to `IlaConfig`
-
-The result type is `(Vec n (Int, String), Signal dom a)`
-
-Example:
+# Example:
 
 >>> counter = register 0 $ counter + 1 :: Signal dom (Unsigned 8)
 >>> active = pure True :: Signal dom Bool
->>> ilaProbe (counter, "8 bit value") (active "system active") ()
+>>> ilaProbe (counter, "8 bit value") (active "system active")
 -}
-ilaProbe :: forall dom t. (HiddenClockResetEnable dom, LabelledSignals t 0 dom ()) => t
-ilaProbe = ilaProbe' (Nil, pure () :: Signal dom ())
-
--- deriving instance (Hashable a, KnownNat n, b ~ n + 1) => Hashable (Vec b a)
+ilaProbe :: (LabelledSignals ((Signal dom a, b) -> t) 0 dom a) => (Signal dom a, b) -> t
+ilaProbe first@(f, _) = ilaProbe' (Nil, f) first
 
 -- | Write signal information to a file, using blackboxes
 writeSignalInfo ::
