@@ -20,6 +20,7 @@ import Ila
 import Packet
 import Pmod
 import Protocols
+import Packet
 
 -- | Resets the ILA trigger whenever we receive an incoming byte from UART
 triggerResetUart ::

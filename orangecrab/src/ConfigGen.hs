@@ -283,7 +283,7 @@ data IlaConfig n a = IlaConfig
   , size :: SNat n
   -- ^ Size of the buffers, aka; how many samples should it capture
   , triggerPoint :: Index n
-  -- ^ How many samples *after* triggering it should sample
+  -- ^ The amount of samples it stores *after* triggering
   , tracing :: a
   -- ^ The signal to trace
   }
