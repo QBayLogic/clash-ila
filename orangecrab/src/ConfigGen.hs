@@ -9,34 +9,28 @@
 module ConfigGen where
 
 import Clash.Prelude hiding (Exp, Type)
-
-import Data.Aeson
-
-import Data.Either
-import Data.Hashable
-
-import Text.Show.Pretty
+import Prelude qualified as P
 
 import Clash.Annotations.Primitive
 import Clash.Backend
 import Clash.Core.Term
 import Clash.Core.TermLiteral
 import Clash.Core.Type
-import Clash.Core.Var
-import Clash.Netlist.BlackBox
 import Clash.Netlist.BlackBox.Types
 import Clash.Netlist.Types
-import Clash.Primitives.DSL
-import Control.Lens qualified
-import Control.Monad.State
-import Data.String.Interpolate (__i)
-import GHC.Stack (HasCallStack, callStack, prettyCallStack)
-import Prettyprinter
-import Prelude qualified as P
 import Clash.Primitives.DSL qualified as DSL
 
-import Data.Data
-import Data.Monoid (Ap(getAp))
+import Control.Lens (view)
+import Control.Monad.State (State)
+import Data.String.Interpolate (__i)
+import GHC.Stack (HasCallStack)
+import Prettyprinter (Doc)
+
+import Data.Aeson (ToJSON, encode)
+import Data.Data (Proxy (Proxy))
+import Data.Either
+import Data.Hashable (Hashable, hash)
+import Data.Monoid (Ap (getAp))
 import Data.Word (Word32)
 
 {- | From a tuple consisting of a signal and a string, grab the bit width of the signal and put it
@@ -144,7 +138,7 @@ writeSignalInfo !_toplevel !_bufSize !_sigInfo = 0
 
 -- | The write signal blackbox function, grabs the AST from the context it gets invoked in
 signalInfoBBF :: (HasCallStack) => BlackBoxFunction
-signalInfoBBF _ _ args _ = Control.Lens.view tcCache >>= go
+signalInfoBBF _ _ args _ = view tcCache >>= go
  where
   go tcm
     | [_, toplevel, _, sigInfo] <- lefts args
@@ -182,13 +176,15 @@ signalInfoBBF _ _ args _ = Control.Lens.view tcCache >>= go
     GenIla
       { toplevel = coerceToType toplevel "toplevel name"
       , bufferSize = snatToNum bufSize
-      , hash = fromIntegral $ hash
-        ( coerceToType toplevel "toplevel name" :: String
-        , snatToInteger bufSize
-        , toList sigInfo
-        )
-      -- The reverse is needed as the polyvariadic function builds up the vector in reverse order
-      , signals = P.reverse $ toList $ toGenSignal <$> sigInfo
+      , hash =
+          fromIntegral
+            $ hash
+              ( coerceToType toplevel "toplevel name" :: String
+              , snatToInteger bufSize
+              , toList sigInfo
+              )
+      , -- The reverse is needed as the polyvariadic function builds up the vector in reverse order
+        signals = P.reverse $ toList $ toGenSignal <$> sigInfo
       }
 
   -- \| Meta information about the blackbox
@@ -312,4 +308,3 @@ data GenIla = GenIla
   , signals :: [GenSignal]
   }
   deriving (Generic, Show, ToJSON, Eq, Hashable)
-
