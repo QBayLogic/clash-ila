@@ -24,7 +24,7 @@ import Control.Lens (view)
 import Control.Monad.State (State)
 import Data.String.Interpolate (__i)
 import GHC.Stack (HasCallStack)
-import Prettyprinter (Doc)
+import Prettyprinter (Doc, Pretty (pretty))
 
 import Data.Aeson (ToJSON, encode)
 import Data.Data (Proxy (Proxy))
@@ -32,6 +32,7 @@ import Data.Either
 import Data.Hashable (Hashable, hash)
 import Data.Monoid (Ap (getAp))
 import Data.Word (Word32)
+import Data.ByteString.Lazy.UTF8 qualified as LUTF8
 
 {- | From a tuple consisting of a signal and a string, grab the bit width of the signal and put it
 in a vector. At the same time, bundle every signal together.
@@ -241,7 +242,7 @@ renderJSON ::
   BlackBoxContext ->
   -- | The output JSON content
   State s (Doc ())
-renderJSON ila _ = pure [__i|#{encode ila}|]
+renderJSON ila _ = pure . pretty . LUTF8.toString $ encode ila
 {-# NOINLINE renderJSON #-}
 
 ilaConfig ::
