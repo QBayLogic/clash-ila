@@ -1,5 +1,6 @@
 {-# LANGUAGE DuplicateRecordFields #-}
 {-# LANGUAGE OverloadedRecordDot #-}
+{-# LANGUAGE UndecidableInstances #-}
 {-# LANGUAGE NoFieldSelectors #-}
 {-# OPTIONS_GHC -fconstraint-solver-iterations=10 #-}
 {-# OPTIONS_GHC -fplugin=Protocols.Plugin #-}
@@ -20,6 +21,7 @@ import Communication
 import Protocols
 import Protocols.PacketStream
 import Protocols.Wishbone
+import SignalFieldSelectors
 
 {- | The buffer of the ila, with signals to control wether or not the signals get captured
 
@@ -120,19 +122,89 @@ ilaBufferManager buffer incoming = bufferData
       (liftA2 (getWord @32) (fst $ buffer bufferIndex) wordIndex)
       (pure 0)
 
+{- | A record containing the values stored in the ILA register map. Not all values are read/writeable
+from the outside.
+
+A lot of the register map is also exposed as a memory map, with the following layout:
+|   Address   | Bus Select |      Description      |  Operation  |
+|-------------|------------|-----------------------|-------------|
+| 0x0000_0000 | 0b0001     | Capture               | ReadWrite   |
+| 0x0000_0000 | 0b0010     | Trigger reset         | ReadWrite'1 |
+| 0x0000_0001 | 0b1111     | Trigger point         | ReadWrite   |
+| 0x0000_0002 | 0b1111     | ILA hash              | Read        |
+| 0x3000_0000 | 0b1111     | Buffer samples        | Read        |
+
+'1: Reading from this address will return wether or not the ILA has been triggered or not
+-}
+data IlaRM depth = IlaRM
+  { capture :: Bool
+  -- ^ If the ILA should be capturing signals
+  , triggered :: Bool
+  -- ^ Indicates if the ILA has been triggered. Note; this does not directly mean it stopped capturing,
+  -- depending on the `triggerPoint` it may still be sampling new values.
+  , triggerPoint :: Index depth
+  -- ^ The amount of signals to capture *after* triggering
+  , shouldSample :: Bool
+  -- ^ Indicates if the ILA should continue sampling data. This gets automatically set after the
+  -- ILA has been triggered and enough samples have been collected. It will only get out of this
+  -- state by resetting the ILA.
+  , sampledAfterTrigger :: Index depth
+  -- ^ The amount of samples the ILA captured after triggering
+  }
+  deriving (Generic, NFDataX, Show)
+
+deriveSignalHasFields ''IlaRM
+
+-- | Read from memory mapped registers in the register map using the addresses selected from a
+-- wishbone packet
+readIlaMM ::
+  ( KnownNat depth
+  , 1 <= depth
+  ) =>
+  -- | The wishbone address
+  BitVector 32 ->
+  -- | The wishbone bus select
+  BitVector 4 ->
+  -- | The ILA MM
+  IlaRM depth ->
+  -- | Associated value with the address and bus select, `Nothing` if there is none
+  Maybe (BitVector 32)
+readIlaMM 0x0000_0000 0b0001 mm = Just . extend $ pack mm.capture
+readIlaMM 0x0000_0000 0b0010 mm = Just . extend $ pack mm.triggered
+readIlaMM 0x0000_0001 0b1111 mm = Just . resize $ pack mm.triggerPoint
+-- readIlaMM 0x0000_0002 0b1111 mm = Just . extend $ pack mm.hash
+readIlaMM _ _ _ = Nothing
+
+{- | Certain registers trigger 'actions' rather than save a value, this enum allows the ILA to
+properly respond to those requests
+-}
+data IlaAction = None | ResetTrigger
+  deriving (Generic, Eq, NFDataX, Show, Enum)
+
+-- | Update the memory mapped registers from the register map from the wishbone request
+writeIlaMM ::
+  ( KnownNat depth
+  , 1 <= depth
+  ) =>
+  -- | The wishbone address
+  BitVector 32 ->
+  -- | The wishbone bus select
+  BitVector 4 ->
+  -- | The value to write
+  BitVector 32 ->
+  -- | The Ila register map
+  IlaRM depth ->
+  -- | Updated Ila register map, invalid addresses will not modify the register map
+  (IlaRM depth, IlaAction)
+writeIlaMM 0x0000_0000 0b0001 write rm = (rm{capture = unpack $ truncateB write}, None)
+writeIlaMM 0x0000_0000 0b0010 _write rm = (rm{triggered = False}, ResetTrigger)
+writeIlaMM 0x0000_0001 0b1111 write rm = (rm{triggerPoint = unpack $ resize write}, None)
+writeIlaMM _ _ _ rm = (rm, None)
+
 {- | ILA Wishbone interface
 
 This circuit can be used to instantiate and configure an ILA using a wishbone interface. Changing
 ILA behaviour is done by writing to specific addresses and selecting the right bytes using busSelect.
-
-A few useful registers are:
-|   Address   | Bus Select |      Description      | Operation |
-|-------------|------------|-----------------------|-----------|
-| 0x0000_0000 | 0b0001     | Capture               | WriteOnly |
-| 0x0000_0000 | 0b0010     | Trigger reset         | WriteOnly |
-| 0x0000_0000 | 0b0100     | Trigger operation     | WriteOnly |
-| 0x0000_0001 | 0b1111     | Trigger point         | WriteOnly |
-| 0x3000_0000 | 0b1111     | Buffer samples        | Read Only |
 -}
 ilaWb ::
   forall dom depth a.
@@ -155,75 +227,79 @@ ilaWb config predicate = Circuit exposeIn
  where
   exposeIn (fwdM2S, _) = out
    where
-    -- In theory, I could respond with `err` when an inproper address is given. However I don't
-    -- quite know how etherboneC reacts to `err` and I doubt it will propagate the error back to
-    -- the host.
+    -- \| The initial contents of the memory map
+    initRM =
+      IlaRM
+        { capture = True
+        , triggered = False
+        , triggerPoint = config.triggerPoint
+        , shouldSample = True
+        , sampledAfterTrigger = 0
+        }
 
-    -- All of this could be written as a struct and a mealy machine
-    -- I think that'd be nicer too...
+    -- \| Update parts of the RM which aren't depending on input from WB
+    updateRM ::
+      -- \| If the predicate got triggered
+      Bool ->
+      -- \| The current register map
+      IlaRM depth ->
+      -- \| The updated register map
+      IlaRM depth
+    updateRM triggered rm =
+      rm
+        { triggered = triggered
+        , sampledAfterTrigger = satAdd SatBound 1 rm.sampledAfterTrigger
+        , shouldSample = not rm.triggered || rm.sampledAfterTrigger < rm.triggerPoint
+        }
 
-    postTriggerSampled :: Signal dom (Index depth)
-    postTriggerSampled = register 0 $ mux triggered (satAdd SatBound 1 <$> postTriggerSampled) 0
+    -- \| Handle WB writes and update the memory map accordingly,
+    (ilaRM, ilaAction) =
+      unbundle $
+        moore
+          ( \(oldMM, _) (wb, triggered) ->
+              if inWbCycle' wb && wb.writeEnable
+                then writeIlaMM wb.addr wb.busSelect wb.writeData $ updateRM triggered oldMM
+                else (oldMM, None)
+          )
+          id
+          (initRM, None)
+          (bundle (fwdM2S, predicate))
 
-    capture :: Signal dom Bool
-    capture =
-      register True $
-        addrMux
-          0x0000_0000
-          0b0001
-          (bitToBool . lsb <$> incomingData)
-          capture
-          fwdM2S
-
-    triggerMode :: Signal dom (Index 7)
-    triggerMode =
-      register 0 $
-        addrMux
-          0x0000_0000
-          0b0100
-          (unpack . resize <$> incomingData)
-          triggerMode
-          fwdM2S
-
-    triggerReset :: Signal dom Bool
-    triggerReset =
-      register False $
-        addrMux
-          0x0000_0000
-          0b0010
-          (bitToBool . lsb <$> incomingData)
-          (pure False)
-          fwdM2S
-
-    triggered :: Signal dom Bool
-    triggered =
-      register False $
-        addrMux
-          0x0000_0000
-          0b0010
-          (not <$> triggerReset)
-          (triggered .||. predicate)
-          fwdM2S
-
-    triggerPoint :: Signal dom (Index depth)
-    triggerPoint =
-      register config.triggerPoint $
-        addrMux
-          0x0000_0001
-          0b1111
-          (unpack . resize <$> incomingData)
-          triggerPoint
-          fwdM2S
-
-    shouldSample :: Signal dom Bool
-    shouldSample = not <$> triggered .||. postTriggerSampled .<. triggerPoint
-
-    incomingData = pack . writeData <$> fwdM2S
-
+    -- \| The output from the ILA's internal buffer
     bufferOutput =
       ilaBufferManager
-        (ilaCore config.size capture config.tracing (not <$> shouldSample) triggerReset)
+        ( ilaCore
+            config.size
+            ilaRM.capture
+            config.tracing
+            (not <$> ilaRM.shouldSample)
+            ((== ResetTrigger) <$> ilaAction)
+        )
         fwdM2S
+
+    -- \| Distribute the read request to different parts of the ILA depending on the address & bus select
+    -- It will first attempt to read from the register map (& constant values), if there's no valid
+    -- address there. It will return the buffer content. If an invalid address gets read there,
+    -- it will return zero.
+    readManager' ::
+      -- \| The current WB packet
+      WishboneM2S 32 4 (BitVector 32) ->
+      -- \| The ila register map
+      IlaRM depth ->
+      -- \| The value the buffer is currently pointing at
+      BitVector 32 ->
+      -- \| The value the component should respond with
+      BitVector 32
+    readManager' wb rm bufValue
+      | wb.addr == 0x0000_0002 && wb.busSelect == 0b1111 = config.hash
+      | otherwise =
+          let
+            mmValue = readIlaMM wb.addr wb.busSelect rm
+           in
+            case mmValue of
+              Just v -> v
+              Nothing -> bufValue
+    readManager = liftA3 readManager' fwdM2S ilaRM bufferOutput
 
     -- \| Generates the wishbone reply
     reply ::
@@ -246,7 +322,7 @@ ilaWb config predicate = Circuit exposeIn
     delayedAck = inWbCycle fwdM2S .&&. (register False $ inWbCycle fwdM2S)
 
     -- Writes are done in one clock cycle, but wishbone timing requires us to delay it by one clock cycle
-    out = (register emptyWishboneS2M $ liftA2 reply delayedAck bufferOutput, ())
+    out = (register emptyWishboneS2M $ liftA2 reply delayedAck readManager, ())
 
 {- | The ILA component itself
 
@@ -256,7 +332,7 @@ trigger. Data communication is being done through `Etherbone` packets which get 
 device. If run configuration of the ILA on the FPGA is desired, please look at `ilaWb` to instantiate
 an ILA with an Wishbone interface instead.
 -}
-ila :: 
+ila ::
   forall dom size a.
   ( HiddenClockResetEnable dom
   , NFDataX a
@@ -313,4 +389,3 @@ ilaUart baud config triggered = circuit $ \rxBit -> do
   txPs <- ila config triggered -< rxPs
 
   idC -< txBit
-
