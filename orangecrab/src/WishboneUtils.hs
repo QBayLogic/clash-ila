@@ -8,13 +8,22 @@ import Clash.Prelude
 import Protocols.Wishbone
 
 -- | Checks if the current `WishboneM2S` is in a wishbone cycle
+inWbCycle' ::
+  forall addrW selW dat.
+  -- | The wishbone instance
+  WishboneM2S addrW selW dat ->
+  -- | Wether or not we're in a wishbone cycle
+  Bool
+inWbCycle' wb = wb.strobe && wb.busCycle
+
+-- | Checks if the current `WishboneM2S` is in a wishbone cycle
 inWbCycle ::
   forall dom addrW selW dat.
   -- | The M2S signal
   Signal dom (WishboneM2S addrW selW dat) ->
   -- | Wether or not we're in a wishbone cycle
   Signal dom Bool
-inWbCycle m2s = strobe <$> m2s .&&. busCycle <$> m2s
+inWbCycle m2s = inWbCycle' <$> m2s
 
 {- | Check if the current wishbone cycle has a specific address and byte select
 
