@@ -1,4 +1,7 @@
 {-# LANGUAGE TemplateHaskell #-}
+{-# LANGUAGE DuplicateRecordFields #-}
+{-# LANGUAGE OverloadedRecordDot #-}
+{-# LANGUAGE NoFieldSelectors #-}
 {-# OPTIONS_GHC -fconstraint-solver-iterations=10 #-}
 {-# OPTIONS_GHC -fplugin=Protocols.Plugin #-}
 
@@ -12,9 +15,9 @@ import Data.Maybe qualified as DM
 
 import Communication
 import ConfigGen
-import Data.HList
 import Domain
 import Ila
+import Packet
 import Pmod
 import Protocols
 import Packet
@@ -62,24 +65,27 @@ topLogicUart baud btns rx = go
   -- Simple demo signal to 'debug'
   counter0 :: (HiddenClockResetEnable dom) => Signal dom (BitVector 9)
   counter0 = register 0 $ satAdd SatWrap 1 <$> counter0
-  counter1 :: (HiddenClockResetEnable dom) => Signal dom (BitVector 9)
+  counter1 :: (HiddenClockResetEnable dom) => Signal dom (BitVector 8)
   counter1 = register 20 $ satAdd SatWrap 1 <$> counter1
-  counter2 :: (HiddenClockResetEnable dom) => Signal dom (BitVector 9)
+  counter2 :: (HiddenClockResetEnable dom) => Signal dom (Signed 10)
   counter2 = register 40 $ satAdd SatWrap 1 <$> counter2
 
   Circuit main = circuit $ \(rxBit) -> do
     (rxByte, txBit) <- uartDf baud -< (txByte, rxBit)
-    -- triggerReset <- shouldReset <| deserializeToPacket -< rxByte
     packet <-
       ila
         ( ilaConfig
             d100
             20
             "name"
-            ((counter0, "Base") .*. (counter1, "+20") .*. (counter2, "+40") .*. HNil)
-            (bundle (counter0, counter1, counter2))
+            ( ilaProbe
+                (counter0, "c0")
+                (counter1, "c1")
+                (counter2, "c2")
+            )
         )
-        (\(a, _, _) -> a == 300)
+        ((==300) <$> counter0)
+        (pure True)
         -< rxByte
     txByte <- ps2df <| dropMeta -< packet
     idC -< txBit

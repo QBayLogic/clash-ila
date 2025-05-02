@@ -297,7 +297,6 @@ impl<'a> TuiSession<'a> {
                 // Handle the case of whenever a prompt gets completed
                 // I want to move this to a seperate function, however due to borrow limits I can't
                 // and that's kind of very annoying
-
                 match prompt.reason {
                     PromptReason::SaveVcd => {
                         if let Some(sample) = self.captured.last() {

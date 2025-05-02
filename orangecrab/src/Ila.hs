@@ -67,8 +67,8 @@ triggerController ::
   ) =>
   -- | The configuration of the ILA
   IlaConfig size (Signal dom a) ->
-  -- | Trigger predicate
-  (a -> Bool) ->
+  -- | Trigger signal
+  Signal dom Bool ->
   -- | The ILA Core
   ( Signal dom a ->
     Signal dom Bool ->
@@ -91,11 +91,10 @@ triggerController config predicate core = Circuit exposeIn
 
     triggered :: Signal dom Bool
     triggered =
-      register False $ mux triggerRst (pure False) triggered .||. (predicate <$> config.tracing)
+      register False $ mux triggerRst (pure False) triggered .||. predicate
 
     shouldSample :: Signal dom Bool
     shouldSample = not <$> triggered .||. postTriggerSampled .<. triggerPoint
-
 
     buffer = core config.tracing shouldSample triggerRst
     Circuit packet = dataPacket config.hash <| mapMeta (\_ -> ()) <| ringBufferReaderPS buffer
@@ -179,23 +178,24 @@ ila ::
   ) =>
   -- | The configuration of the ILA
   IlaConfig size (Signal dom a) ->
-  -- | Trigger predicate
-  (a -> Bool) ->
+  -- | Trigger
+  Signal dom Bool ->
+  -- | Capture
+  Signal dom Bool ->
   -- | The ILA circuit, the input needs to be connected to some sort of byte input and the output
   -- is a PacketStream containing bytes to be routed to the PC.
-  --
   -- TODO: example? Not added one yet due to possible change in API
   Circuit
     (CSignal dom (Maybe (BitVector 8)))
     (PacketStream dom (BitSize a `DivRU` 8) IlaFinalHeader)
-ila config predicate = circuit $ \rxByte -> do
+ila config trigger capture = circuit $ \rxByte -> do
   Fwd dec <- deserializeToPacket -< rxByte
 
   triggerReset <- rearmTrigger -< Fwd dec
   hasNewTrigger <- changeTriggerPoint -< Fwd dec
 
   controller <-
-    (triggerController config predicate $ ilaCore config.size (pure True))
+    (triggerController config trigger $ ilaCore config.size capture)
       -< (hasNewTrigger, triggerReset)
   packets <- finalizePacket -< controller
 

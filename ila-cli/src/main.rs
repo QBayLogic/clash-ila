@@ -144,9 +144,8 @@ impl ParseSubcommand for TuiArgs {
         let rx_port = find_specified_port(&self.port, self.baud);
         let mut tx_port = rx_port.try_clone()
             .expect("Couldn't open port for writing");
-        let configs = config::read_config(&self.config)
+        let config = config::read_config(&self.config)
             .expect(&format!("File at {:?} contained errors", &self.config));
-        let config = configs.ilas[0].clone();
 
         let Ok(mut session) = tui::TuiSession::new(&config) else { return };
 
@@ -230,10 +229,8 @@ fn packet_analysis(port: Box<dyn SerialPort>, args: AnalysisArgs) {
         port.name().unwrap_or(String::from("<unknown>"))
     );
 
-    //TODO: MAKE THIS A LOOP FOR EACH ILA INSTEAD OF JUST USING THE FIRST ONE!!!!
-    let configs = config::read_config(&args.config)
+    let config = config::read_config(&args.config)
         .expect(&format!("File at {:?} contained errors", &args.config));
-    let config = configs.ilas[0].clone();
 
     let rx = packet::packet_loop(port.bytes(), config);
     for packet in rx {
@@ -248,10 +245,8 @@ fn vcd_dump(port: Box<dyn SerialPort>, args: VcdArgs) {
         port.name().unwrap_or(String::from("<unknown>"))
     );
 
-    //TODO: MAKE THIS A LOOP FOR EACH ILA INSTEAD OF JUST USING THE FIRST ONE!!!!
-    let configs = config::read_config(&args.config)
+    let config = config::read_config(&args.config)
         .expect(&format!("File at {:?} contained errors", &args.config));
-    let config = configs.ilas[0].clone();
 
     let rx = packet::packet_loop(port.bytes(), config.clone());
     let mut rx_iter = rx.iter();
