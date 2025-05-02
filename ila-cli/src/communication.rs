@@ -92,12 +92,16 @@ pub enum IlaRegisters {
     Compare(Vec<u8>),
     /// Read out samples from the ILA buffer, each vector item is an index within the buffer
     Buffer(Vec<u32>),
+    /// Read the hash of the ILA, can be used to check if the current instantiated ILA is
+    /// out-of-date
+    Hash(u32),
 }
 
 /// Output of the register whenever a read operation is performed on the ILA.
 pub enum RegisterOutput {
     None,
     BufferContent(SignalCluster),
+    Hash(bool),
 }
 
 impl IlaRegisters {
@@ -108,6 +112,7 @@ impl IlaRegisters {
             IlaRegisters::TriggerReset => (0x0000_0000, [false, false, true, false]),
             IlaRegisters::TriggerOp(_) => (0x0000_0000, [false, true, false, false]),
             IlaRegisters::TriggerPoint(_) => (0x0000_0001, [true; 4]),
+            IlaRegisters::Hash(_) => (0x0000_0002, [true; 4]),
             IlaRegisters::Mask(_) => (0x1000_0000, [true; 4]),
             IlaRegisters::Compare(_) => (0x2000_0000, [true; 4]),
             IlaRegisters::Buffer(_) => (0x3000_0000, [true; 4]),
@@ -126,6 +131,10 @@ impl IlaRegisters {
             IlaRegisters::Compare(_) => RegisterOutput::None,
             IlaRegisters::Buffer(_) => {
                 RegisterOutput::BufferContent(SignalCluster::from_data(ila, output))
+            }
+            IlaRegisters::Hash(compare) => {
+                let hash_matches = output.get(0).map(|hash| hash == compare).unwrap_or(false);
+                RegisterOutput::Hash(hash_matches)
             }
         }
     }
@@ -177,13 +186,16 @@ impl IlaRegisters {
                     .flatten()
                     .collect();
                 WbTransaction::new_reads(byte_select, addr, buffer_indices)
+            },
+            IlaRegisters::Hash(_) => {
+                WbTransaction::new_reads(byte_select, addr, vec![0])
             }
         }
     }
 }
 
 /// Perform a register operation on the ILA given a valid medium to do so.
-/// 
+///
 /// The register will be converted into a `WbTransaction` and then sent over the network using the
 /// Etherbone specifications.
 ///

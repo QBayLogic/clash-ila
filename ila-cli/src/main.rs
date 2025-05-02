@@ -3,12 +3,13 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use clap::{Args, Parser, Subcommand};
+use communication::{perform_register_operation, IlaRegisters, RegisterOutput};
 use serialport::SerialPort;
 use vcd::write_to_vcd;
 use wishbone::WbTransaction;
 
-mod config;
 mod communication;
+mod config;
 mod trigger;
 mod tui;
 mod vcd;
@@ -88,11 +89,21 @@ impl ParseSubcommand for MonitorArgs {
 
 impl ParseSubcommand for TuiArgs {
     fn parse(self) {
-        let rx_port = find_specified_port(&self.port, self.baud);
-        let tx_port = rx_port.try_clone()
-            .expect("Couldn't open port for writing");
+        let mut tx_port = find_specified_port(&self.port, self.baud);
         let config = config::read_config(&self.config)
             .expect(&format!("File at {:?} contained errors", &self.config));
+
+        match perform_register_operation(&mut tx_port, &config, &IlaRegisters::Hash(config.hash)) {
+            Ok(RegisterOutput::Hash(true)) => {},
+            Ok(_) => {
+                println!("Provided config hash and ILA hash do not match!");
+                return;
+            },
+            Err(err) => {
+                println!("Failed to send ILA: {err}");
+                panic!("Failed to check for the ILA hash");
+            },
+        }
 
         let Ok(mut session) = tui::TuiSession::new(&config) else {
             return;
