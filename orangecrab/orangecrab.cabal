@@ -82,6 +82,7 @@ library
   import: common-options
   hs-source-dirs: src
   exposed-modules:
+    SignalFieldSelectors
     Domain
     Pmod
     RGB
