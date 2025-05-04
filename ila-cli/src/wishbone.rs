@@ -200,6 +200,7 @@ mod tests {
     const TEST_FLAGS: u8 = 0x00;
     const TEST_BYTE_SELECT: u8 = 0x0f;
 
+    /// Tests creation of simple read etherbone messages
     #[test]
     fn simple_read() {
         for index in 0..=255 {
@@ -234,6 +235,7 @@ mod tests {
         }
     }
 
+    /// Tests creation of simple write etherbone messages
     #[test]
     fn simple_write() {
         for index in 0..=255 {
@@ -266,9 +268,37 @@ mod tests {
                 "Failed read packets between 0 and 255, at {index}"
             )
         }
-        //assert_eq!(, 1, "Yes");
     }
 
+    /// Tests that EBRecords cannot contain more than 255 writes
+    #[test]
+    #[should_panic]
+    fn write_slightly_too_big() {
+        EBRecord {
+            byte_select: TEST_BYTE_SELECT,
+            read_addr: 0,
+            reads: vec![],
+            write_addr: TEST_WRITE_ADDR,
+            writes: vec![0; 256],
+        }
+        .packetize();
+    }
+
+    /// Tests that EBRecords cannot contain more than 255 reads
+    #[test]
+    #[should_panic]
+    fn read_slightly_too_big() {
+        EBRecord {
+            byte_select: TEST_BYTE_SELECT,
+            read_addr: TEST_READ_ADDR,
+            reads: vec![0; 256],
+            write_addr: 0,
+            writes: vec![],
+        }
+        .packetize();
+    }
+
+    /// Tests that EBRecords cannot contain more than 255 writes
     #[test]
     #[should_panic]
     fn write_too_big() {
@@ -278,6 +308,20 @@ mod tests {
             reads: vec![],
             write_addr: TEST_WRITE_ADDR,
             writes: vec![0; 300],
+        }
+        .packetize();
+    }
+
+    /// Tests that EBRecords cannot contain more than 255 reads
+    #[test]
+    #[should_panic]
+    fn read_too_big() {
+        EBRecord {
+            byte_select: TEST_BYTE_SELECT,
+            read_addr: TEST_READ_ADDR,
+            reads: vec![0; 300],
+            write_addr: 0,
+            writes: vec![],
         }
         .packetize();
     }
