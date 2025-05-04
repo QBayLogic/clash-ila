@@ -88,8 +88,14 @@ impl EBRecord {
     /// Panics when EBRecord struct contains more than 255 write or more than 255 read elements
     /// This shouldn't happen under usual circumstances
     pub fn packetize(&self) -> Vec<u8> {
-        assert!(self.reads.len() <= 255, "Tried to packetize EBRecord with too many reads");
-        assert!(self.writes.len() <= 255, "Tried to packetize EBRecord with too many writes");
+        assert!(
+            self.reads.len() <= 255,
+            "Tried to packetize EBRecord with too many reads"
+        );
+        assert!(
+            self.writes.len() <= 255,
+            "Tried to packetize EBRecord with too many writes"
+        );
 
         // Why does .concat have to return a Vec? why is there no const concat method for if the
         // sub elements are also const? Annoying.
@@ -199,6 +205,7 @@ mod tests {
     const TEST_WRITE_ADDR: u32 = 0x4000_0000;
     const TEST_FLAGS: u8 = 0x00;
     const TEST_BYTE_SELECT: u8 = 0x0f;
+    const TEST_BYTE_SELECT_ARRAY: [bool; 4] = [true; 4];
 
     /// Tests creation of simple read etherbone messages
     #[test]
@@ -257,10 +264,7 @@ mod tests {
                 } else {
                     TEST_WRITE_ADDR.to_be_bytes().to_vec()
                 },
-                (0..index)
-                    .map(|n| n.to_be_bytes())
-                    .flatten()
-                    .collect(),
+                (0..index).map(|n| n.to_be_bytes()).flatten().collect(),
             ]
             .concat();
             assert_eq!(
@@ -324,5 +328,36 @@ mod tests {
             writes: vec![],
         }
         .packetize();
+    }
+
+    /// Tests if WB transactions get properly split into multiple etherbone packets
+    #[test]
+    fn transaction_split() {
+        let lengths = [
+            (0, 0),
+            (100, 100),
+            (0, 80),
+            (80, 0),
+            (250, 20),
+            (250, 0),
+            (0, 250),
+            (20, 250),
+            (250, 250),
+            (500, 200),
+            (800, 500),
+        ];
+
+        for (reads, writes) in lengths {
+            let records = WbTransaction {
+                byte_select: TEST_BYTE_SELECT_ARRAY,
+                read_addr: TEST_READ_ADDR,
+                reads: vec![0x00; reads],
+                write_addr: TEST_WRITE_ADDR,
+                writes: vec![0x00; writes],
+            }
+            .to_records();
+            let expected = reads.div_ceil(255).max(writes.div_ceil(255));
+            assert_eq!(records.len(), expected, "Transaction did not split into proper length, (reads, writes): ({reads}, {writes})")
+        }
     }
 }
