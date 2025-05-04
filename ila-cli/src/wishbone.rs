@@ -81,7 +81,16 @@ impl WbTransaction {
 }
 
 impl EBRecord {
+    /// Convert this EBRecord into a stream of bytes
+    ///
+    /// # Panics
+    ///
+    /// Panics when EBRecord struct contains more than 255 write or more than 255 read elements
+    /// This shouldn't happen under usual circumstances
     pub fn packetize(&self) -> Vec<u8> {
+        assert!(self.reads.len() <= 255, "Tried to packetize EBRecord with too many reads");
+        assert!(self.writes.len() <= 255, "Tried to packetize EBRecord with too many writes");
+
         // Why does .concat have to return a Vec? why is there no const concat method for if the
         // sub elements are also const? Annoying.
 
@@ -121,6 +130,16 @@ impl EBRecord {
         packet.concat()
     }
 
+    /// Write the EBRecord over a medium and awaits for a response on the same medium
+    ///
+    /// Returns the etherbone response data. It strips the header information, it returns any data
+    /// from reads. If there were reads performed. It will return an `Error` if the returned packet
+    /// doesn't match the input.
+    ///
+    /// # Panics
+    ///
+    /// Panics when EBRecord struct contains more than 255 write or more than 255 read elements
+    /// This shouldn't happen under usual circumstances
     pub fn perform<T>(&self, medium: &mut T) -> IoResult<Vec<u32>>
     where
         T: Read + Write,
@@ -248,5 +267,18 @@ mod tests {
             )
         }
         //assert_eq!(, 1, "Yes");
+    }
+
+    #[test]
+    #[should_panic]
+    fn write_too_big() {
+        EBRecord {
+            byte_select: TEST_BYTE_SELECT,
+            read_addr: 0,
+            reads: vec![],
+            write_addr: TEST_WRITE_ADDR,
+            writes: vec![0; 300],
+        }
+        .packetize();
     }
 }
