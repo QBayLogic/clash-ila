@@ -186,8 +186,8 @@ signalInfoBBF :: (HasCallStack) => BlackBoxFunction
 signalInfoBBF _ _ args _ = view tcCache >>= go
  where
   go tcm
-    | [_, toplevel, _, sigInfo] <- lefts args
-    , [_, (coreView tcm -> LitTy (NumTy n)), (coreView tcm -> LitTy (NumTy s))] <- rights args
+    | [toplevel, _, sigInfo] <- lefts args
+    , [(coreView tcm -> LitTy (NumTy n)), (coreView tcm -> LitTy (NumTy s))] <- rights args
     , Just (SomeNat (Proxy :: Proxy n)) <- someNatVal n
     , Just (SomeNat (Proxy :: Proxy s)) <- someNatVal s =
         mkBlackBox $ getGenIla @n toplevel (SNat @s) (getSigInfo sigInfo)
