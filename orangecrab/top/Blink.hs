@@ -72,17 +72,17 @@ topLogicUart baud btns rx = go
 
   Circuit demoIla = ilaUart
     baud
-    ( ilaConfig
-        d100
-        20
-        "toplevel"
-        ( ilaProbe
-          (counter0, "c0")
-          (counter1, "c1")
-          (counter2, "c2")
-        )
-    )
-    ((==300) <$> counter0)
+    $ ilaConfig
+      (counter0, "c0")
+      (counter1, "c1")
+      (counter2, "c2")
+      WithIlaConfig 
+        { bufferDepth=d100
+        , trigger=((==300) <$> counter0)
+        , toplevel="hi mom"
+        , triggerPoint=0
+        , capture=pure True
+        }
 
   txBit = snd $ demoIla (rx, pure ())
 

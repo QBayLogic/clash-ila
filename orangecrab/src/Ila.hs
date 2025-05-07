@@ -2,6 +2,7 @@
 {-# LANGUAGE OverloadedRecordDot #-}
 {-# LANGUAGE UndecidableInstances #-}
 {-# LANGUAGE NoFieldSelectors #-}
+{-# LANGUAGE TypeAbstractions #-}
 {-# OPTIONS_GHC -fconstraint-solver-iterations=10 #-}
 {-# OPTIONS_GHC -fplugin=Protocols.Plugin #-}
 
@@ -35,6 +36,7 @@ ilaCore ::
   , NFDataX a
   , BitPack a
   , KnownNat size
+  , 1 <= BitSize a `DivRU` 32
   , 1 <= size
   ) =>
   SNat size ->
@@ -155,8 +157,9 @@ data IlaRM depth = IlaRM
 
 deriveSignalHasFields ''IlaRM
 
--- | Read from memory mapped registers in the register map using the addresses selected from a
--- wishbone packet
+{- | Read from memory mapped registers in the register map using the addresses selected from a
+wishbone packet
+-}
 readIlaMM ::
   ( KnownNat depth
   , 1 <= depth
@@ -207,32 +210,25 @@ This circuit can be used to instantiate and configure an ILA using a wishbone in
 ILA behaviour is done by writing to specific addresses and selecting the right bytes using busSelect.
 -}
 ilaWb ::
-  forall dom depth a.
+  forall dom.
   ( HiddenClockResetEnable dom
-  , BitPack a
-  , NFDataX a
-  , KnownNat depth
-  , 1 <= BitSize a `DivRU` 32
-  , 1 <= depth
   ) =>
   -- | Initial ILA configuration
-  IlaConfig depth (Signal dom a) ->
-  -- | Signal indicating if the predicate has triggered
-  Signal dom Bool ->
+  IlaConfig dom ->
   -- | The ILA wishbone interface
   Circuit
     (Wishbone dom Standard 32 (BitVector 32))
     ()
-ilaWb config predicate = Circuit exposeIn
+ilaWb (Ila @_ @_ @depth depth initTriggerPoint ilaHash tracing triggerSignal captureSignal) = Circuit exposeIn
  where
   exposeIn (fwdM2S, _) = out
    where
     -- \| The initial contents of the memory map
     initRM =
       IlaRM
-        { capture = True
+        { capture = False
         , triggered = False
-        , triggerPoint = config.triggerPoint
+        , triggerPoint = initTriggerPoint
         , shouldSample = True
         , sampledAfterTrigger = 0
         }
@@ -241,13 +237,16 @@ ilaWb config predicate = Circuit exposeIn
     updateRM ::
       -- \| If the predicate got triggered
       Bool ->
+      -- \| If the capture is set
+      Bool ->
       -- \| The current register map
       IlaRM depth ->
       -- \| The updated register map
       IlaRM depth
-    updateRM triggered rm =
+    updateRM triggered capture rm =
       rm
         { triggered = triggered
+        , capture = capture
         , sampledAfterTrigger = satAdd SatBound 1 rm.sampledAfterTrigger
         , shouldSample = not rm.triggered || rm.sampledAfterTrigger < rm.triggerPoint
         }
@@ -256,22 +255,22 @@ ilaWb config predicate = Circuit exposeIn
     (ilaRM, ilaAction) =
       unbundle $
         moore
-          ( \(oldMM, _) (wb, triggered) ->
+          ( \(oldMM, _) (wb, triggered, capture) ->
               if inWbCycle' wb && wb.writeEnable
-                then writeIlaMM wb.addr wb.busSelect wb.writeData $ updateRM triggered oldMM
+                then writeIlaMM wb.addr wb.busSelect wb.writeData $ updateRM triggered capture oldMM
                 else (oldMM, None)
           )
           id
           (initRM, None)
-          (bundle (fwdM2S, predicate))
+          (bundle (fwdM2S, triggerSignal, captureSignal))
 
     -- \| The output from the ILA's internal buffer
     bufferOutput =
       ilaBufferManager
         ( ilaCore
-            config.size
+            depth
             ilaRM.capture
-            config.tracing
+            tracing
             (not <$> ilaRM.shouldSample)
             ((== ResetTrigger) <$> ilaAction)
         )
@@ -291,7 +290,7 @@ ilaWb config predicate = Circuit exposeIn
       -- \| The value the component should respond with
       BitVector 32
     readManager' wb rm bufValue
-      | wb.addr == 0x0000_0002 && wb.busSelect == 0b1111 = config.hash
+      | wb.addr == 0x0000_0002 && wb.busSelect == 0b1111 = ilaHash
       | otherwise =
           let
             mmValue = readIlaMM wb.addr wb.busSelect rm
@@ -333,27 +332,20 @@ device. If run configuration of the ILA on the FPGA is desired, please look at `
 an ILA with an Wishbone interface instead.
 -}
 ila ::
-  forall dom size a.
+  forall dom.
   ( HiddenClockResetEnable dom
-  , NFDataX a
-  , BitPack a
-  , KnownNat size
-  , 1 <= size
-  , 1 <= BitSize a `DivRU` 32
   ) =>
   -- | The initial configuration of the ILA
-  IlaConfig size (Signal dom a) ->
-  -- | Trigger
-  Signal dom Bool ->
+  IlaConfig dom ->
   -- | The ILA circuit, the incoming packet stream should contain valid `Etherbone` packets. The
   -- outgoing stream are etherbone response packets.
   Circuit
     (PacketStream dom 4 ())
     (PacketStream dom 4 ())
-ila config triggered = circuit $ \incoming -> do
+ila config = circuit $ \incoming -> do
   (outgoing, wbMaster) <- etherboneC 0 (pure Nil) -< incoming
 
-  ilaWb config triggered -< wbMaster
+  ilaWb config -< wbMaster
 
   idC -< outgoing
 
@@ -361,31 +353,24 @@ ila config triggered = circuit $ \incoming -> do
 connection to the host PC is an UART connection.
 -}
 ilaUart ::
-  forall dom size a baud.
+  forall dom baud.
   ( HiddenClockResetEnable dom
   , ValidBaud dom baud
-  , NFDataX a
-  , BitPack a
-  , KnownNat size
-  , 1 <= size
-  , 1 <= BitSize a `DivRU` 32
   ) =>
   SNat baud ->
   -- | The initial configuration of the ILA
-  IlaConfig size (Signal dom a) ->
-  -- | Trigger
-  Signal dom Bool ->
+  IlaConfig dom ->
   -- | The ILA circuit but with signals of bits as input and output. These should be directly wired
   -- to the toplevel UART RX and TX pins.
   Circuit
     (CSignal dom Bit)
     (CSignal dom Bit)
-ilaUart baud config triggered = circuit $ \rxBit -> do
+ilaUart baud config = circuit $ \rxBit -> do
   (rxByte, txBit) <- uartDf baud -< (txByte, rxBit)
 
   rxPs <- etherboneDfPacketizer <| holdUntilAck -< rxByte
   txByte <- ps2df -< txPs
 
-  txPs <- ila config triggered -< rxPs
+  txPs <- ila config -< rxPs
 
   idC -< txBit
