@@ -76,11 +76,11 @@ topLogicUart baud btns rx = go
       (counter0, "c0")
       (counter1, "c1")
       (counter2, "c2")
-      WithIlaConfig 
+      WithIlaConfig
         { bufferDepth=d100
-        , trigger=((==300) <$> counter0)
-        , toplevel="hi mom"
+        , name="hi mom"
         , triggerPoint=0
+        , triggers=ilaDefaultPredicates
         , capture=pure True
         }
 
