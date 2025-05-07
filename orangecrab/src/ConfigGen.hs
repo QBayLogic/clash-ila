@@ -48,6 +48,9 @@ type Predicate a =
   -- | Bool indicating if the predicate holds true
   Bool
 
+-- | Same as `Predicate a` but with a string to display in the CLI
+type NamedPredicate a = (Predicate a, String)
+
 -- | Default ILA predicate for checking equality
 -- It applies the mask over the incoming sample and `==` it with the compare value
 ilaPredicateEq :: (BitPack a) => Predicate a
@@ -74,13 +77,13 @@ ilaPredicateGte :: (BitPack a) => Predicate a
 ilaPredicateGte s c m = pack s .&. m >= c
 
 -- | Predefined list of five ILA predicates. The operators it covers are: `==`, `>`, `>=`, `<`, `<=`
-ilaDefaultPredicates :: (BitPack a) => Vec 5 (Predicate a)
+ilaDefaultPredicates :: (BitPack a) => Vec 5 (NamedPredicate a)
 ilaDefaultPredicates =
-  ( ilaPredicateEq
-      :> ilaPredicateGt
-      :> ilaPredicateGte
-      :> ilaPredicateLt
-      :> ilaPredicateLte
+  ( (ilaPredicateEq, "Equals")
+      :> (ilaPredicateGt, "Greater than")
+      :> (ilaPredicateGte, "Greater than or equals")
+      :> (ilaPredicateLt, "Less than")
+      :> (ilaPredicateLte, "Less than or equals")
       :> Nil
   )
 
@@ -130,7 +133,7 @@ data WithIlaConfig dom a where
     -- ^ How many samples *after* triggering it will continue to sample
     , bufferDepth :: SNat n
     -- ^ The amount of samples that can be stored in the buffer
-    , triggers :: Vec m (Predicate a)
+    , triggers :: Vec m (NamedPredicate a)
     , capture :: Signal dom Bool
     -- ^ The capture signal
     } ->
@@ -167,11 +170,11 @@ instance
       , triggerPoint = triggerPoint
       , hash = ilaHash
       , tracing = tracing
-      , triggers = triggers
+      , triggers = fst <$> triggers
       , capture = capture
       }
    where
-    ilaHash = writeSignalInfo toplevel bufferDepth (fromGenSignal <$> signalInfos)
+    ilaHash = writeSignalInfo toplevel bufferDepth (fromGenSignal <$> signalInfos) (snd <$> triggers)
 
 {- | General case
 For every pair of new set of `(Signal dom a, "name")`, bundle the signal and collect the name
@@ -228,16 +231,17 @@ ilaConfig (s :: (Signal dom a, String)) =
 
 -- | Write signal information to a file, using blackboxes
 writeSignalInfo ::
-  forall n s.
+  forall n m s.
   -- | Toplevel name
   String ->
   -- | Buffer size
   SNat s ->
   -- | A `Vec` of signal widths and their label
   Vec n (Int, String) ->
+  Vec m String ->
   -- | The hash of the JSON
   BitVector 32
-writeSignalInfo !_toplevel !_bufSize !_sigInfo = 0
+writeSignalInfo !_toplevel !_bufSize !_sigInfo !_triggerNames = 0
 {-# OPAQUE writeSignalInfo #-}
 {-# ANN writeSignalInfo hasBlackBox #-}
 {-# ANN
@@ -262,11 +266,19 @@ signalInfoBBF :: (HasCallStack) => BlackBoxFunction
 signalInfoBBF _ _ args _ = view tcCache >>= go
  where
   go tcm
-    | [toplevel, _, sigInfo] <- lefts args
-    , [(coreView tcm -> LitTy (NumTy n)), (coreView tcm -> LitTy (NumTy s))] <- rights args
+    | [toplevel, _, sigInfo, triggerNames] <- lefts args
+    , [ (coreView tcm -> LitTy (NumTy n))
+      , (coreView tcm -> LitTy (NumTy m))
+      , (coreView tcm -> LitTy (NumTy s))
+      ] <- rights args
     , Just (SomeNat (Proxy :: Proxy n)) <- someNatVal n
+    , Just (SomeNat (Proxy :: Proxy m)) <- someNatVal m
     , Just (SomeNat (Proxy :: Proxy s)) <- someNatVal s =
-        mkBlackBox $ getGenIla @n toplevel (SNat @s) (getSigInfo sigInfo)
+        mkBlackBox $ getGenIla @n @m @s
+          toplevel
+          (SNat @s)
+          (getSigInfo sigInfo)
+          (coerceToType triggerNames "cry")
     | otherwise = errorX "Improper data given, expected Vec n (Int, String)"
 
   -- \| Make the actual blackbox
@@ -292,8 +304,17 @@ signalInfoBBF _ _ args _ = view tcCache >>= go
 
   -- \| Generate the ILA from the AST
   getGenIla ::
-    forall n s. (KnownNat n, KnownNat s) => Term -> SNat s -> Vec n (Int, String) -> GenIla
-  getGenIla toplevel bufSize sigInfo =
+    forall n m s.
+    ( KnownNat n
+    , KnownNat m
+    , KnownNat s
+    ) =>
+    Term ->
+    SNat s ->
+    Vec n (Int, String) ->
+    Vec m (String) ->
+    GenIla
+  getGenIla toplevel bufSize sigInfo triggerNames  =
     GenIla
       { toplevel = coerceToType toplevel "toplevel name"
       , bufferSize = snatToNum bufSize
@@ -306,6 +327,7 @@ signalInfoBBF _ _ args _ = view tcCache >>= go
               )
       , -- The reverse is needed as the polyvariadic function builds up the vector in reverse order
         signals = P.reverse $ toList $ toGenSignal <$> sigInfo
+      , triggerNames = toList triggerNames
       }
 
   -- \| Meta information about the blackbox
@@ -389,5 +411,6 @@ data GenIla = GenIla
   , bufferSize :: Word32
   , hash :: Word32
   , signals :: [GenSignal]
+  , triggerNames :: [String]
   }
   deriving (Generic, Show, ToJSON, Eq, Hashable)
