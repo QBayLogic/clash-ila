@@ -1,12 +1,10 @@
+{-# LANGUAGE OverloadedStrings #-}
+
 module Tests.Communication where
 
--- NOTE: THESE TESTS ARE STILL WORK IN PROGRESS
--- They do __NOT__ work yet!
--- This file is very incomplete
-
 import Clash.Hedgehog.Sized.Unsigned (genUnsigned)
-import Clash.Prelude
-import Clash.Sized.Vector (unsafeFromList)
+import Clash.Prelude as CP
+import Clash.Sized.Vector (fromList, unsafeFromList)
 
 import Protocols
 import Protocols.Df qualified as Df
@@ -15,6 +13,8 @@ import Protocols.PacketStream
 import Data.Data qualified as DD
 import Data.List qualified as DL
 import Data.List.Split qualified as DLS
+import Data.Maybe qualified as DM
+import Prelude as P
 
 import Hedgehog
 import Hedgehog.Gen qualified as Gen
@@ -22,48 +22,79 @@ import Hedgehog.Range qualified as Range
 
 import Communication
 
-ps2dfModel ::
-  forall byteSize.
-  (KnownNat byteSize) =>
-  [Maybe (PacketStreamM2S byteSize ())] ->
-  [Df.Data (BitVector 8)]
-ps2dfModel i = go
- where
-  intoBytes :: Maybe (PacketStreamM2S byteSize a) -> [Df.Data (BitVector 8)]
-  intoBytes (Just packet) = Df.Data <$> (DL.take (validByteCount $ _last packet) $ toList (_data packet))
-  intoBytes Nothing = [Df.NoData]
+depacketizeProperty :: Property
+depacketizeProperty = property $ do
+  let
+    wcre = withClockResetEnable systemClockGen systemResetGen enableGen
+    simOptions = def{resetCycles = 0, ignoreReset = False}
 
-  validByteCount :: Maybe (Index (byteSize + 1)) -> Int
-  validByteCount (Just c) = fromEnum c
-  validByteCount (Nothing) = fromEnum (maxBound :: Index (byteSize + 1))
+    -- Etherbone settings & flags
+    ebMagicMsb = 0x4e
+    ebMagicLsb = 0x6f
+    ebVersion = 0x10
+    ebPortAddrSize = 0x44
+    ebFlags = 0x00
+    ebByteSelect = 0x0f
 
-  go = DL.concat (intoBytes <$> i)
+    bytesPerWord = 4
 
-createPacket ::
-  forall a buffWidth aWidth.
-  ( BitPack a
-  , aWidth ~ BitSize a `DivRU` 8
-  , aWidth * 8 ~ BitSize a
-  , KnownNat buffWidth
-  , KnownNat aWidth
-  , 1 <= buffWidth
-  , 1 <= aWidth
-  ) =>
-  [a] ->
-  [Maybe (PacketStreamM2S buffWidth ())]
-createPacket input = go
- where
-  intoBytes :: a -> Vec aWidth (BitVector 8)
-  intoBytes i = bitCoerce i
+    commonBytes =
+      [ ebMagicMsb
+      , ebMagicLsb
+      , ebVersion
+      , ebPortAddrSize
+      , ebFlags
+      , ebByteSelect
+      ] ::
+        [BitVector 8]
 
-  -- Just $ PacketStreamM2S {
-  -- _abort=False, _meta=i, _data=resize (bitCoerce i), _last=__last}
+  readsInt <- forAll $ Gen.list (Range.linear 0 255) $ Gen.int (Range.constant 0 65536)
+  writesInt <- forAll $ Gen.list (Range.linear 0 255) $ Gen.int (Range.constant 0 65536)
 
-  go = error "X"
+  let
+    intoBytes' :: BitVector 32 -> Vec 4 (BitVector 8)
+    intoBytes' = unpack
+    intoBytes = toList . intoBytes'
 
-convertionProperty :: Property
-convertionProperty = property $ do
-  let toSimulate = withClockResetEnable systemClockGen systemResetGen enableGen
-  let simOptions = def{resetCycles = 1, ignoreReset = False}
+    reads = P.concatMap intoBytes (fromIntegral <$> readsInt :: [BitVector 32]) :: [BitVector 8]
+    writes = P.concatMap intoBytes (fromIntegral <$> writesInt :: [BitVector 32]) :: [BitVector 8]
 
-  True === True
+    -- \| Prefixes the address to the to reads/writes, if there are any
+    prefixAddr input
+      | P.length input == 0 = input
+      | otherwise = [0xff, 0xff, 0xff, 0xff] P.++ input
+
+    readWriteLength :: [BitVector 8]
+    readWriteLength =
+      [ fromIntegral $ P.length reads `div` bytesPerWord
+      , fromIntegral $ P.length writes `div` bytesPerWord
+      ]
+
+    byteStream = commonBytes P.++ readWriteLength P.++ prefixAddr reads P.++ prefixAddr writes
+
+    toPS' bytes isLast =
+      PacketStreamM2S
+        { _abort = False
+        , _last = if isLast then Just . fromIntegral $ P.length bytes else Nothing
+        , _meta = ()
+        , _data = unsafeFromList @4 (bytes P.++ P.replicate (bytesPerWord - P.length bytes) 0x00)
+        }
+
+    toPS [] = []
+    toPS [remaining] = [toPS' remaining True]
+    toPS (x : xs) = toPS' x False : toPS xs
+
+    expected = toPS $ DLS.chunksOf bytesPerWord byteStream
+    simulated =
+      P.take (P.length expected) $
+        DM.catMaybes $
+          simulateC (wcre etherboneDfPacketizer) simOptions (Df.Data <$> byteStream)
+
+  simulated === expected
+
+communicationTestGroup :: Group
+communicationTestGroup =
+  Group
+    "Communication"
+    [ ("Depacketization", depacketizeProperty)
+    ]
