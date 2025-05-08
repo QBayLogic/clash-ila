@@ -32,8 +32,6 @@ import Data.Hashable (Hashable, hash)
 import Data.Monoid (Ap (getAp))
 import Data.Word (Word32)
 
-import Unsafe.Coerce (unsafeCoerce)
-
 {- | ILA predicate function
 Used to compare incoming data to a reference value (with a possible mask) and returns if the
 predicate holds or not. This is used for the ILA trigger and the ILA capture
@@ -100,6 +98,7 @@ data IlaConfig dom where
     , 1 <= BitSize a `DivRU` 32
     , 1 <= n
     , 1 <= m
+    , m <= 64
     ) =>
     { depth :: SNat n
     -- ^ The amount of samples that can be stored in the buffer
@@ -126,6 +125,7 @@ data WithIlaConfig dom a where
     , BitPack a
     , 1 <= n
     , 1 <= m
+    , m <= 64
     ) =>
     { name :: String
     -- ^ The name displayed in the VCD file for your toplevel design

@@ -124,6 +124,15 @@ ilaBufferManager buffer incoming = bufferData
       (liftA2 (getWord @32) (fst $ buffer bufferIndex) wordIndex)
       (pure 0)
 
+-- | Defines how the ILA should treat the trigger select registers
+data IlaPredicateOperation = PredicateAND | PredicateOR
+  deriving (Generic, NFDataX, Show, Enum, BitPack)
+
+-- | The actual operation associated with this predicate operation
+predicateOp :: (Foldable t) => IlaPredicateOperation -> (t Bool -> Bool)
+predicateOp PredicateAND = and
+predicateOp PredicateOR = or
+
 {- | A record containing the values stored in the ILA register map. Not all values are read/writeable
 from the outside.
 
@@ -134,23 +143,23 @@ A lot of the register map is also exposed as a memory map, with the following la
 | 0x0000_0000 | 0b0010     | Trigger reset         | ReadWrite'1 |
 | 0x0000_0001 | 0b1111     | Trigger point         | ReadWrite   |
 | 0x0000_0002 | 0b1111     | ILA hash              | Read        |
-| 0x0000_0003 | 0b1111     | ILA trigger select    | ReadWrite   |
-| 0x0000_0004 | 0b1111     | ILA capture select    | ReadWrite   |
+| 0x0000_0003 | 0b0001     | ILA trigger operation | ReadWrite'2 |
+| 0x0000_0004 | 0b1111     | ILA trigger select 0  | ReadWrite'3 |
+| 0x0000_0005 | 0b1111     | ILA trigger select 1  | ReadWrite'3 |
 | 0x1000_0000 | 0b1111     | ILA trigger mask      | ReadWrite   |
 | 0x1100_0000 | 0b1111     | ILA trigger compare   | ReadWrite   |
-| 0x2000_0000 | 0b1111     | ILA capture mask      | ReadWrite   |
-| 0x2100_0000 | 0b1111     | ILA capture compare   | ReadWrite   |
 | 0x3000_0000 | 0b1111     | Buffer samples        | Read        |
 
 '1: Reading from this address will return wether or not the ILA has been triggered or not
+'2: Trigger operation is either AND if thre first bit is set, otherwise OR is assumed
+'3: Each bit is for one trigger
 -}
 data IlaRM bitSizeA depth n = IlaRM
   { capture :: Bool
   -- ^ If the ILA should be capturing signals
   , triggered :: Bool
-  -- ^ Indicates if the ILA has been triggered. Note; this does not directly mean it stopped capturing,
-  -- depending on the `triggerPoint` it may still be sampling new values.
-  , triggerPoint :: Index depth
+  , -- depending on the `triggerPoint` it may still be sampling new values.
+    triggerPoint :: Index depth
   -- ^ The amount of signals to capture *after* triggering
   , shouldSample :: Bool
   -- ^ Indicates if the ILA should continue sampling data. This gets automatically set after the
@@ -158,8 +167,10 @@ data IlaRM bitSizeA depth n = IlaRM
   -- state by resetting the ILA.
   , sampledAfterTrigger :: Index depth
   -- ^ The amount of samples the ILA captured after triggering
-  , triggerIndex :: Index n
+  , triggerSelect :: BitVector 64
   -- ^ Which trigger predicate to use
+  , triggerOperation :: IlaPredicateOperation
+  -- ^ How the ILA treats the trigger predicates in combination with `triggerSelect` bits
   , triggerMask :: BitVector bitSizeA
   -- ^ The mask given to the trigger predicate
   , triggerCompare :: BitVector bitSizeA
@@ -187,11 +198,12 @@ readIlaMM ::
   IlaRM a depth n ->
   -- | Associated value with the address and bus select, `Nothing` if there is none
   Maybe (BitVector 32)
-readIlaMM 0x0000_0000 0b0001 mm = Just . extend $ pack mm.capture
-readIlaMM 0x0000_0000 0b0010 mm = Just . extend $ pack mm.triggered
-readIlaMM 0x0000_0001 0b1111 mm = Just . resize $ pack mm.triggerPoint
-readIlaMM 0x0000_0003 0b1111 mm = Just . resize $ pack mm.triggerIndex
--- readIlaMM 0x0000_0002 0b1111 mm = Just . extend $ pack mm.hash
+readIlaMM 0x0000_0000 0b0001 rm = Just . extend $ pack rm.capture
+readIlaMM 0x0000_0000 0b0010 rm = Just . extend $ pack rm.triggered
+readIlaMM 0x0000_0001 0b1111 rm = Just . resize $ pack rm.triggerPoint
+readIlaMM 0x0000_0003 0b0001 rm = Just . resize $ pack rm.triggerOperation
+readIlaMM 0x0000_0004 0b1111 rm = Just $ resize (rm.triggerSelect .>>. 32)
+readIlaMM 0x0000_0005 0b1111 rm = Just $ resize (rm.triggerSelect .&. 0xffff_ffff)
 readIlaMM _ _ _ = Nothing
 
 {- | Certain registers trigger 'actions' rather than save a value, this enum allows the ILA to
@@ -221,7 +233,15 @@ writeIlaMM ::
 writeIlaMM 0x0000_0000 0b0001 write rm = (rm{capture = unpack $ truncateB write}, None)
 writeIlaMM 0x0000_0000 0b0010 _write rm = (rm{triggered = False}, ResetTrigger)
 writeIlaMM 0x0000_0001 0b1111 write rm = (rm{triggerPoint = unpack $ resize write}, None)
-writeIlaMM 0x0000_0003 0b1111 write rm = (rm{triggerIndex = unpack $ resize write}, None)
+writeIlaMM 0x0000_0003 0b0001 write rm = (rm{triggerOperation = unpack $ resize write}, None)
+writeIlaMM 0x0000_0004 0b1111 write rm =
+  ( rm{triggerSelect = rm.triggerSelect .&. (unpack $ resize write :: BitVector 64) .<<. 32}
+  , None
+  )
+writeIlaMM 0x0000_0005 0b1111 write rm =
+  ( rm{triggerSelect = rm.triggerSelect .&. (unpack $ resize write :: BitVector 64)}
+  , None
+  )
 writeIlaMM _ _ _ rm = (rm, None)
 
 {- | ILA Wishbone interface
@@ -251,8 +271,9 @@ ilaWb (IlaConfig @_ @a @depth @m depth initTriggerPoint ilaHash tracing triggers
         , triggerPoint = initTriggerPoint
         , shouldSample = True
         , sampledAfterTrigger = 0
-        , triggerIndex = minBound -- TODO: make this selectable by user
-        , triggerMask = maxBound -- TODO: make this selectable by user
+        , triggerOperation = PredicateOR
+        , triggerSelect = maxBound
+        , triggerMask = maxBound
         , triggerCompare = 0 -- TODO: make this selectable by user
         }
 
@@ -276,7 +297,14 @@ ilaWb (IlaConfig @_ @a @depth @m depth initTriggerPoint ilaHash tracing triggers
 
     -- \| Selects the right predicate and applies it on incoming sample
     doesTrigger :: IlaRM (BitSize a) depth m -> a -> Bool
-    doesTrigger rm currentSample = (triggers !! rm.triggerIndex) currentSample rm.triggerCompare rm.triggerMask
+    doesTrigger rm currentSample =
+      predicateOp rm.triggerOperation $
+        imap
+          ( \index trigger ->
+              testBit rm.triggerSelect (fromIntegral index)
+                && trigger currentSample rm.triggerCompare rm.triggerMask
+          )
+          triggers
 
     -- \| Handle WB writes and update the memory map accordingly,
     (ilaRM, ilaAction) =
