@@ -299,6 +299,22 @@ impl<'a> TuiSession<'a> {
                     PromptReason::ChangeTrigger,
                 ));
             }
+            (TuiState::Main, KeyCode::Char('1'), _) => {
+                perform_register_operation(tx_port, &self.config, &IlaRegisters::TriggerSelect(1))
+                    .expect("cri");
+                perform_register_operation(
+                    tx_port,
+                    &self.config,
+                    &IlaRegisters::Compare(vec![0x00, 0x00, 0x00, 0xc8]),
+                )
+                .expect("cri");
+                perform_register_operation(
+                    tx_port,
+                    &self.config,
+                    &IlaRegisters::Mask(vec![0x00, 0x00, 0x01, 0xff]),
+                )
+                .expect("cri");
+            }
             (TuiState::Main, KeyCode::Char('v'), _) => {
                 self.state = TuiState::InPrompt(TextPromptState::new(
                     "Save VCD file (default: dump.vcd)",
@@ -328,27 +344,28 @@ impl<'a> TuiSession<'a> {
                             self.log.push(format!("Nothing to save"));
                         }
                     }
-                    PromptReason::ChangeTrigger => {
-                        match prompt.input.parse() {
-                            Ok(n) if n > self.config.buffer_size as u32 => {
-                                self.log
-                                    .push(format!("Invalid input; must be specified range"));
-                            }
-                            Ok(n) => {
-                                self.log
-                                    .push(match perform_register_operation(tx_port, self.config, &IlaRegisters::TriggerPoint(n)) {
-                                        Ok(_) => String::from("Trigger point change made"),
-                                        Err(err) => format!("Error: {err}"),
-                                    },
-                                );
-                            }
-                            Err(_) => {
-                                self.log.push(format!(
-                                    "Invalid input; must be a unsigned 32 bit number"
-                                ));
-                            }
+                    PromptReason::ChangeTrigger => match prompt.input.parse() {
+                        Ok(n) if n > self.config.buffer_size as u32 => {
+                            self.log
+                                .push(format!("Invalid input; must be specified range"));
                         }
-                    }
+                        Ok(n) => {
+                            self.log.push(
+                                match perform_register_operation(
+                                    tx_port,
+                                    self.config,
+                                    &IlaRegisters::TriggerPoint(n),
+                                ) {
+                                    Ok(_) => String::from("Trigger point change made"),
+                                    Err(err) => format!("Error: {err}"),
+                                },
+                            );
+                        }
+                        Err(_) => {
+                            self.log
+                                .push(format!("Invalid input; must be a unsigned 32 bit number"));
+                        }
+                    },
                 }
 
                 self.state = TuiState::Main;

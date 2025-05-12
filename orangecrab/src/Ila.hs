@@ -78,6 +78,29 @@ getWord ::
   BitVector word
 getWord a i = (unpack . resize $ pack a :: Vec n (BitVector word)) !! i
 
+{- | Sets a specific word of `a`, which may be several words wide
+The width of the `word` is defined by the user of the function
+-}
+setWord ::
+  forall word input n.
+  ( BitPack input
+  , KnownNat word
+  , KnownNat n
+  , n ~ BitSize input `DivRU` word
+  ) =>
+  -- | The input
+  input ->
+  -- | The index of the word we want
+  Index n ->
+  -- | The value we want to set it too
+  BitVector word ->
+  -- | The output, our input with the word swapped
+  input
+setWord a i w = unpack . resize . pack $ replace i w inputWords
+ where
+  inputWords :: Vec n (BitVector word)
+  inputWords = unpack . resize $ pack a
+
 {- | Retrieves a specific word from the ILA buffer. It will only listen to addresses within the
 range of 0x3000_0000 and 0x3fff_ffff. Each address refers to a specific word (=32 bits) in the
 buffer.
@@ -167,7 +190,7 @@ data IlaRM bitSizeA depth n = IlaRM
   -- state by resetting the ILA.
   , sampledAfterTrigger :: Index depth
   -- ^ The amount of samples the ILA captured after triggering
-  , triggerSelect :: BitVector 64
+  , triggerSelect :: BitVector 32
   -- ^ Which trigger predicate to use
   , triggerOperation :: IlaPredicateOperation
   -- ^ How the ILA treats the trigger predicates in combination with `triggerSelect` bits
@@ -186,9 +209,11 @@ wishbone packet
 readIlaMM ::
   forall a depth n.
   ( KnownNat depth
+  , KnownNat a
   , KnownNat n
   , 1 <= n
   , 1 <= depth
+  , 1 <= a
   ) =>
   -- | The wishbone address
   BitVector 32 ->
@@ -206,6 +231,19 @@ readIlaMM 0x0000_0004 0b1111 rm = Just $ resize (rm.triggerSelect .>>. 32)
 readIlaMM 0x0000_0005 0b1111 rm = Just $ resize (rm.triggerSelect .&. 0xffff_ffff)
 readIlaMM _ _ _ = Nothing
 
+-- | Tests if multiple bits (via a mask) match
+testBits ::
+  (Bits a) =>
+  -- | Value to test
+  a ->
+  -- | The compare value
+  a ->
+  -- | The bit mask
+  a ->
+  -- | True is the bits match
+  Bool
+testBits value ref msk = value .&. msk == ref
+
 {- | Certain registers trigger 'actions' rather than save a value, this enum allows the ILA to
 properly respond to those requests
 -}
@@ -216,9 +254,12 @@ data IlaAction = None | ResetTrigger
 writeIlaMM ::
   forall a depth n.
   ( KnownNat depth
+  , KnownNat a
   , KnownNat n
   , 1 <= depth
   , 1 <= n
+  , 1 <= a `DivRU` 32
+  , 1 <= a
   ) =>
   -- | The wishbone address
   BitVector 32 ->
@@ -234,14 +275,14 @@ writeIlaMM 0x0000_0000 0b0001 write rm = (rm{capture = unpack $ truncateB write}
 writeIlaMM 0x0000_0000 0b0010 _write rm = (rm{triggered = False}, ResetTrigger)
 writeIlaMM 0x0000_0001 0b1111 write rm = (rm{triggerPoint = unpack $ resize write}, None)
 writeIlaMM 0x0000_0003 0b0001 write rm = (rm{triggerOperation = unpack $ resize write}, None)
-writeIlaMM 0x0000_0004 0b1111 write rm =
-  ( rm{triggerSelect = rm.triggerSelect .&. (unpack $ resize write :: BitVector 64) .<<. 32}
-  , None
-  )
-writeIlaMM 0x0000_0005 0b1111 write rm =
-  ( rm{triggerSelect = rm.triggerSelect .&. (unpack $ resize write :: BitVector 64)}
-  , None
-  )
+writeIlaMM 0x0000_0004 0b1111 write rm = (rm{triggerSelect = write}, None)
+writeIlaMM address 0b1111 write rm
+  | testBits address 0x1000_0000 0xff00_0000 =
+      (rm{triggerMask = setWord rm.triggerMask index write}, None)
+  | testBits address 0x1100_0000 0xff00_0000 =
+      (rm{triggerCompare = setWord rm.triggerCompare index write}, None)
+ where
+  index = unpack . resize $ address .&. 0x00ff_ffff
 writeIlaMM _ _ _ rm = (rm, None)
 
 {- | ILA Wishbone interface
@@ -272,7 +313,7 @@ ilaWb (IlaConfig @_ @a @depth @m depth initTriggerPoint ilaHash tracing triggers
         , shouldSample = True
         , sampledAfterTrigger = 0
         , triggerOperation = PredicateOR
-        , triggerSelect = maxBound
+        , triggerSelect = minBound
         , triggerMask = maxBound
         , triggerCompare = 0 -- TODO: make this selectable by user
         }
@@ -289,14 +330,15 @@ ilaWb (IlaConfig @_ @a @depth @m depth initTriggerPoint ilaHash tracing triggers
       IlaRM (BitSize a) depth m
     updateRM triggered capture rm =
       rm
-        { triggered = triggered
+        { triggered = rm.triggered || triggered
         , capture = capture
-        , sampledAfterTrigger = satAdd SatBound 1 rm.sampledAfterTrigger
+        , sampledAfterTrigger = if rm.triggered then satAdd SatBound 1 rm.sampledAfterTrigger else 0
         , shouldSample = not rm.triggered || rm.sampledAfterTrigger < rm.triggerPoint
         }
 
     -- \| Selects the right predicate and applies it on incoming sample
     doesTrigger :: IlaRM (BitSize a) depth m -> a -> Bool
+    -- doesTrigger rm currentSample = ilaPredicateEq currentSample rm.triggerCompare rm.triggerMask
     doesTrigger rm currentSample =
       predicateOp rm.triggerOperation $
         imap
@@ -315,7 +357,7 @@ ilaWb (IlaConfig @_ @a @depth @m depth initTriggerPoint ilaHash tracing triggers
                 then
                   writeIlaMM wb.addr wb.busSelect wb.writeData $
                     updateRM (doesTrigger oldMM currentSample) capture oldMM
-                else (oldMM, None)
+                else (updateRM (doesTrigger oldMM currentSample) capture oldMM, None)
           )
           id
           (initRM, None)
@@ -349,12 +391,11 @@ ilaWb (IlaConfig @_ @a @depth @m depth initTriggerPoint ilaHash tracing triggers
     readManager' wb rm bufValue
       | wb.addr == 0x0000_0002 && wb.busSelect == 0b1111 = ilaHash
       | otherwise =
-          let
-            mmValue = readIlaMM wb.addr wb.busSelect rm
-           in
-            case mmValue of
-              Just v -> v
-              Nothing -> bufValue
+          case readIlaMM wb.addr wb.busSelect rm of
+            Just v -> v
+            Nothing
+              | rm.shouldSample -> 0
+              | otherwise -> bufValue
     readManager = liftA3 readManager' fwdM2S ilaRM bufferOutput
 
     -- \| Generates the wishbone reply
@@ -378,7 +419,10 @@ ilaWb (IlaConfig @_ @a @depth @m depth initTriggerPoint ilaHash tracing triggers
     delayedAck = inWbCycle fwdM2S .&&. (register False $ inWbCycle fwdM2S)
 
     -- Writes are done in one clock cycle, but wishbone timing requires us to delay it by one clock cycle
-    out = (register emptyWishboneS2M $ liftA2 reply delayedAck readManager, ())
+    out =
+      ( register emptyWishboneS2M $ liftA2 reply delayedAck readManager
+      , ()
+      )
 
 {- | The ILA component itself
 

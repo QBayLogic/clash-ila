@@ -96,6 +96,7 @@ data IlaConfig dom where
     , NFDataX a
     , BitPack a
     , 1 <= BitSize a `DivRU` 32
+    , 1 <= BitSize a
     , 1 <= n
     , 1 <= m
     , m <= 64
@@ -123,6 +124,8 @@ data WithIlaConfig dom a where
     ( KnownNat n
     , KnownNat m
     , BitPack a
+    , 1 <= BitSize a `DivRU` 32
+    , 1 <= BitSize a
     , 1 <= n
     , 1 <= m
     , m <= 64

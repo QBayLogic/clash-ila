@@ -63,9 +63,9 @@ topLogicUart ::
 topLogicUart baud btns rx = go
  where
   -- Simple demo signal to 'debug'
-  counter0 :: (HiddenClockResetEnable dom) => Signal dom (BitVector 9)
+  counter0 :: (HiddenClockResetEnable dom) => Signal dom (Unsigned 9)
   counter0 = register 0 $ satAdd SatWrap 1 <$> counter0
-  counter1 :: (HiddenClockResetEnable dom) => Signal dom (BitVector 8)
+  counter1 :: (HiddenClockResetEnable dom) => Signal dom (Unsigned 8)
   counter1 = register 20 $ satAdd SatWrap 1 <$> counter1
   counter2 :: (HiddenClockResetEnable dom) => Signal dom (Signed 10)
   counter2 = register 40 $ satAdd SatWrap 1 <$> counter2
@@ -78,13 +78,13 @@ topLogicUart baud btns rx = go
       (counter2, "c2")
       WithIlaConfig
         { bufferDepth=d100
-        , name="hi mom"
+        , name="himom"
         , triggerPoint=0
         , triggers=ilaDefaultPredicates
         , capture=pure True
         }
 
-  txBit = snd $ demoIla (rx, pure ())
+  txBit = snd $ demoIla (rx, (pure ()))
 
   off = pure $ Pmod8LD False False False False False False False False 
 

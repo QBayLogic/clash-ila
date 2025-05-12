@@ -74,6 +74,12 @@ impl SignalCluster {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum PredicateOperation {
+    And = 0,
+    Or = 1,
+}
+
 /// An enum for operating on different registers on the ILA, without having to know the explicit
 /// address.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -82,8 +88,6 @@ pub enum IlaRegisters {
     Capture(bool),
     /// Register re-arming the trigger (and clear the buffer)
     TriggerReset,
-    /// Register controlling how the trigger should operate
-    TriggerOp(TriggerOp),
     /// Register controlling how many samples it should store after triggering
     TriggerPoint(u32),
     /// The value to mask the samples against before triggering
@@ -95,6 +99,9 @@ pub enum IlaRegisters {
     /// Read the hash of the ILA, can be used to check if the current instantiated ILA is
     /// out-of-date
     Hash(u32),
+    /// How the trigger should handle mutliple predicates
+    TriggerOp(PredicateOperation),
+    TriggerSelect(u32),
 }
 
 /// Output of the register whenever a read operation is performed on the ILA.
@@ -110,12 +117,13 @@ impl IlaRegisters {
         match self {
             IlaRegisters::Capture(_) => (0x0000_0000, [false, false, false, true]),
             IlaRegisters::TriggerReset => (0x0000_0000, [false, false, true, false]),
-            IlaRegisters::TriggerOp(_) => (0x0000_0000, [false, true, false, false]),
             IlaRegisters::TriggerPoint(_) => (0x0000_0001, [true; 4]),
             IlaRegisters::Hash(_) => (0x0000_0002, [true; 4]),
             IlaRegisters::Mask(_) => (0x1000_0000, [true; 4]),
-            IlaRegisters::Compare(_) => (0x2000_0000, [true; 4]),
+            IlaRegisters::Compare(_) => (0x1100_0000, [true; 4]),
             IlaRegisters::Buffer(_) => (0x3000_0000, [true; 4]),
+            IlaRegisters::TriggerOp(_) => (0x0000_0003, [false, false, false, true]),
+            IlaRegisters::TriggerSelect(_) => (0x0000_0004, [true; 4]),
         }
     }
 
@@ -125,7 +133,6 @@ impl IlaRegisters {
         match self {
             IlaRegisters::Capture(_) => RegisterOutput::None,
             IlaRegisters::TriggerReset => RegisterOutput::None,
-            IlaRegisters::TriggerOp(_) => RegisterOutput::None,
             IlaRegisters::TriggerPoint(_) => RegisterOutput::None,
             IlaRegisters::Mask(_) => RegisterOutput::None,
             IlaRegisters::Compare(_) => RegisterOutput::None,
@@ -136,6 +143,8 @@ impl IlaRegisters {
                 let hash_matches = output.get(0).map(|hash| hash == compare).unwrap_or(false);
                 RegisterOutput::Hash(hash_matches)
             }
+            IlaRegisters::TriggerOp(_) => RegisterOutput::None,
+            IlaRegisters::TriggerSelect(_) => RegisterOutput::None,
         }
     }
 
@@ -148,11 +157,6 @@ impl IlaRegisters {
                 WbTransaction::new_writes(byte_select, addr, vec![*capture as u32])
             }
             IlaRegisters::TriggerReset => WbTransaction::new_writes(byte_select, addr, vec![1]),
-            IlaRegisters::TriggerOp(trigger_op) => WbTransaction::new_writes(
-                byte_select,
-                addr,
-                vec![(trigger_op.to_u8() as u32) << 16],
-            ),
             IlaRegisters::TriggerPoint(trig_point) => {
                 WbTransaction::new_writes(byte_select, addr, vec![*trig_point])
             }
@@ -189,6 +193,12 @@ impl IlaRegisters {
             },
             IlaRegisters::Hash(_) => {
                 WbTransaction::new_reads(byte_select, addr, vec![0])
+            }
+            IlaRegisters::TriggerOp(op) => {
+                WbTransaction::new_writes(byte_select, addr, vec![*op as u32])
+            }
+            IlaRegisters::TriggerSelect(selection) => {
+                WbTransaction::new_writes(byte_select, addr, vec![*selection])
             }
         }
     }
