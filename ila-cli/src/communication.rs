@@ -1,5 +1,4 @@
 use crate::config::IlaConfig;
-use crate::trigger::TriggerOp;
 use crate::wishbone::WbTransaction;
 use bitvec::prelude::{BitVec, Msb0};
 use bitvec::store::BitStore;
@@ -22,6 +21,7 @@ pub struct Signal {
 ///
 /// This should be considered as 'all signals being monitored by the ILA in one timeframe'
 #[derive(Debug, Clone)]
+#[allow(unused)]
 pub struct SignalCluster {
     pub cluster: Vec<Signal>,
     pub timestamp: Duration,
@@ -29,7 +29,7 @@ pub struct SignalCluster {
 
 impl SignalCluster {
     /// Interpret a stream of data as signals
-    pub fn from_data<T>(config: &IlaConfig, input: &Vec<T>) -> SignalCluster
+    pub fn from_data<T>(config: &IlaConfig, input: &[T]) -> SignalCluster
     where
         T: BitStore,
     {
@@ -77,13 +77,12 @@ impl SignalCluster {
 /// An enum for operating on different registers on the ILA, without having to know the explicit
 /// address.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[allow(unused)]
 pub enum IlaRegisters {
     /// Register controlling wether or not to capture samples
     Capture(bool),
     /// Register re-arming the trigger (and clear the buffer)
     TriggerReset,
-    /// Register controlling how the trigger should operate
-    TriggerOp(TriggerOp),
     /// Register controlling how many samples it should store after triggering
     TriggerPoint(u32),
     /// The value to mask the samples against before triggering
@@ -110,7 +109,6 @@ impl IlaRegisters {
         match self {
             IlaRegisters::Capture(_) => (0x0000_0000, [false, false, false, true]),
             IlaRegisters::TriggerReset => (0x0000_0000, [false, false, true, false]),
-            IlaRegisters::TriggerOp(_) => (0x0000_0000, [false, true, false, false]),
             IlaRegisters::TriggerPoint(_) => (0x0000_0001, [true; 4]),
             IlaRegisters::Hash(_) => (0x0000_0002, [true; 4]),
             IlaRegisters::Mask(_) => (0x1000_0000, [true; 4]),
@@ -121,11 +119,10 @@ impl IlaRegisters {
 
     /// 'Translates' the raw word output into something useful, given the register of which the
     /// read was attempted from
-    pub fn translate_output(&self, ila: &IlaConfig, output: &Vec<u32>) -> RegisterOutput {
+    pub fn translate_output(&self, ila: &IlaConfig, output: &[u32]) -> RegisterOutput {
         match self {
             IlaRegisters::Capture(_) => RegisterOutput::None,
             IlaRegisters::TriggerReset => RegisterOutput::None,
-            IlaRegisters::TriggerOp(_) => RegisterOutput::None,
             IlaRegisters::TriggerPoint(_) => RegisterOutput::None,
             IlaRegisters::Mask(_) => RegisterOutput::None,
             IlaRegisters::Compare(_) => RegisterOutput::None,
@@ -133,7 +130,7 @@ impl IlaRegisters {
                 RegisterOutput::BufferContent(SignalCluster::from_data(ila, output))
             }
             IlaRegisters::Hash(compare) => {
-                let hash_matches = output.get(0).map(|hash| hash == compare).unwrap_or(false);
+                let hash_matches = output.first().map(|hash| hash == compare).unwrap_or(false);
                 RegisterOutput::Hash(hash_matches)
             }
         }
@@ -148,11 +145,6 @@ impl IlaRegisters {
                 WbTransaction::new_writes(byte_select, addr, vec![*capture as u32])
             }
             IlaRegisters::TriggerReset => WbTransaction::new_writes(byte_select, addr, vec![1]),
-            IlaRegisters::TriggerOp(trigger_op) => WbTransaction::new_writes(
-                byte_select,
-                addr,
-                vec![(trigger_op.to_u8() as u32) << 16],
-            ),
             IlaRegisters::TriggerPoint(trig_point) => {
                 WbTransaction::new_writes(byte_select, addr, vec![*trig_point])
             }
@@ -182,8 +174,7 @@ impl IlaRegisters {
                 let words_per_index = ila.transaction_bit_count().div_ceil(32) as u32;
                 let buffer_indices = logical_indices
                     .iter()
-                    .map(|index| (*index..*index + words_per_index).collect::<Vec<u32>>())
-                    .flatten()
+                    .flat_map(|index| (*index..*index + words_per_index).collect::<Vec<u32>>())
                     .collect();
                 WbTransaction::new_reads(byte_select, addr, buffer_indices)
             },
