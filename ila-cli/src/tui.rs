@@ -1,5 +1,4 @@
-use std::io::Write;
-use std::sync::mpsc::Receiver;
+use std::io::{Read, Write};
 use std::{io, time::Duration};
 
 use crossterm::event::{Event as TuiEvent, KeyEvent, KeyModifiers};
@@ -16,13 +15,15 @@ use ratatui::{
     *,
 };
 
+use crate::communication::{
+    perform_register_operation, IlaRegisters, RegisterOutput, SignalCluster,
+};
 use crate::config::IlaConfig;
 use crate::vcd::write_to_vcd;
 
-use crate::packet::*;
-
 /// The keybind text displayed in the TUI
-const KEYBIND_TEXT: &'static str = r#"  C-c   ---   Exit
+const KEYBIND_TEXT: &str = r#"  C-c   ---   Exit
+  space ---   Read samples (if triggered)
   t     ---   Change trigger point
   c     ---   Change trigger logic
   r     ---   Reset trigger
@@ -68,7 +69,7 @@ impl TextPromptState {
         S0: Into<String>,
         S1: Into<String>,
     {
-        let def = default.map(|s| s.into()).unwrap_or(String::new());
+        let def = default.map(|s| s.into()).unwrap_or_default();
         let len = def.len();
         TextPromptState {
             title: title.into(),
@@ -219,13 +220,13 @@ impl<'a> TuiSession<'a> {
             let info_menu_block = Block::default().title("Info").borders(Borders::ALL);
             let info_info_section =
                 Paragraph::new(format!("Received {} captures", self.captured.len()));
-            let info_log_section = Paragraph::new(
-                self.log
-                    .iter()
-                    .map(|s| format!("{s}\n"))
-                    .collect::<String>(),
-            )
-            .block(Block::default().borders(Borders::TOP));
+            let info_log_section =
+                Paragraph::new(self.log.iter().fold(String::new(), |mut acc, s| {
+                    acc.push_str(s);
+                    acc.push('\n');
+                    acc
+                }))
+                .block(Block::default().borders(Borders::TOP));
 
             f.render_widget(help_menu, main_layout[0]);
             f.render_widget(info_menu_block, main_layout[1]);
@@ -258,21 +259,37 @@ impl<'a> TuiSession<'a> {
                 text_prompt.render_bounds.0 = center.x;
                 text_prompt.render_bounds.1 = center.x + center.width;
 
-                f.set_cursor(text_prompt.get_cursor_x(), center.y);
+                f.set_cursor_position((text_prompt.get_cursor_x(), center.y));
                 f.render_stateful_widget(TextPrompt, center, text_prompt);
             }
         });
     }
 
     /// Handle the keypresses. Returns wether or not it should break out of the main loop or not
-    fn on_key_event<T: Write>(&mut self, event: KeyEvent, tx_port: &mut T) -> bool {
+    fn on_key_event<T: Read + Write>(&mut self, event: KeyEvent, tx_port: &mut T) -> bool {
         match (&mut self.state, event.code, event.modifiers) {
             (TuiState::Main, KeyCode::Char('c'), KeyModifiers::CONTROL) => {
                 return true;
             }
             (TuiState::Main, KeyCode::Char('r'), _) => {
-                if let Err(err) = send_packet(tx_port, &ResetTriggerPacket) {
+                if let Err(err) =
+                    perform_register_operation(tx_port, self.config, &IlaRegisters::TriggerReset)
+                {
                     self.log.push(format!("Error: {err}"));
+                }
+            }
+            (TuiState::Main, KeyCode::Char(' '), _) => {
+                let indices: Vec<u32> = (0_u32..self.config.buffer_size as u32).collect();
+                match perform_register_operation(
+                    tx_port,
+                    self.config,
+                    &IlaRegisters::Buffer(indices),
+                ) {
+                    Ok(RegisterOutput::BufferContent(cluster)) => self.captured.push(cluster),
+                    Ok(_) => self
+                        .log
+                        .push("Unexpected output when reading buffer".to_string()),
+                    Err(err) => self.log.push(format!("Error: {err}")),
                 }
             }
             (TuiState::Main, KeyCode::Char('t'), _) => {
@@ -290,7 +307,7 @@ impl<'a> TuiSession<'a> {
                 ));
             }
             (TuiState::InPrompt(_), KeyCode::Esc, _) => {
-                self.log.push(format!("Cancelled save"));
+                self.log.push("Cancelled save".to_string());
                 self.state = TuiState::Main;
             }
             (TuiState::InPrompt(prompt), KeyCode::Enter, _) => {
@@ -301,36 +318,39 @@ impl<'a> TuiSession<'a> {
                     PromptReason::SaveVcd => {
                         if let Some(sample) = self.captured.last() {
                             if let Err(err) =
-                                write_to_vcd(sample, &self.config, prompt.input.clone())
+                                write_to_vcd(sample, self.config, prompt.input.clone())
                             {
                                 self.log.push(format!("Error when saving VCD: {}", err));
                             } else {
-                                self.log.push(format!("Saved succesfully!"));
+                                self.log.push("Saved succesfully!".to_string());
                             }
                         } else {
-                            self.log.push(format!("Nothing to save"));
+                            self.log.push("Nothing to save".to_string());
                         }
                     }
-                    PromptReason::ChangeTrigger => {
-                        match prompt.input.parse() {
-                            Ok(n) if n > self.config.buffer_size as u32 => {
-                                self.log
-                                    .push(format!("Invalid input; must be specified range"));
-                            }
-                            Ok(n) => {
-                                self.log
-                                    .push(match send_packet(tx_port, &ChangeTriggerPoint(n)) {
-                                        Ok(_) => String::from("Trigger point change made"),
-                                        Err(err) => format!("Error: {err}"),
-                                    });
-                            }
-                            Err(_) => {
-                                self.log.push(format!(
-                                    "Invalid input; must be a unsigned 32 bit number"
-                                ));
-                            }
+                    PromptReason::ChangeTrigger => match prompt.input.parse() {
+                        Ok(n) if n > self.config.buffer_size as u32 => {
+                            self.log
+                                .push("Invalid input; must be specified range".to_string());
                         }
-                    }
+                        Ok(n) => {
+                            self.log.push(
+                                match perform_register_operation(
+                                    tx_port,
+                                    self.config,
+                                    &IlaRegisters::TriggerPoint(n),
+                                ) {
+                                    Ok(_) => String::from("Trigger point change made"),
+                                    Err(err) => format!("Error: {err}"),
+                                },
+                            );
+                        }
+                        Err(_) => {
+                            self.log.push(
+                                "Invalid input; must be a unsigned 32 bit number".to_string(),
+                            );
+                        }
+                    },
                 }
 
                 self.state = TuiState::Main;
@@ -369,18 +389,10 @@ impl<'a> TuiSession<'a> {
     /// The main TUI loop
     ///
     /// Handles everything from rendering to the input of the TUI interface
-    pub fn main_loop<T: Write>(&mut self, incoming_signals: Receiver<Packets>, mut tx_port: T) {
+    pub fn main_loop<T: Read + Write>(&mut self, mut tx_port: T) {
         self.render();
 
         loop {
-            if let Ok(packet) = incoming_signals.try_recv() {
-                match packet {
-                    Packets::Data(signals) => self.captured.push(signals),
-                }
-
-                self.render();
-            }
-
             if let Ok(true) = poll(Duration::ZERO) {
                 let event = match read() {
                     Ok(TuiEvent::Key(key)) => key,

@@ -1,6 +1,6 @@
-{-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE DuplicateRecordFields #-}
 {-# LANGUAGE OverloadedRecordDot #-}
+{-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE NoFieldSelectors #-}
 {-# OPTIONS_GHC -fconstraint-solver-iterations=10 #-}
 {-# OPTIONS_GHC -fplugin=Protocols.Plugin #-}
@@ -13,14 +13,11 @@ import Clash.Prelude
 
 import Data.Maybe qualified as DM
 
-import Communication
 import ConfigGen
 import Domain
 import Ila
-import Packet
 import Pmod
 import Protocols
-import Packet
 
 -- | Resets the ILA trigger whenever we receive an incoming byte from UART
 triggerResetUart ::
@@ -58,8 +55,11 @@ topLogicUart ::
   Signal dom (BitVector 4) ->
   -- | RX
   Signal dom Bit ->
-  -- | TX
-  Signal dom Bit
+  -- | Leds
+  ( Signal dom Pmod8LD
+  , -- \| TX
+    Signal dom Bit
+  )
 topLogicUart baud btns rx = go
  where
   -- Simple demo signal to 'debug'
@@ -70,27 +70,25 @@ topLogicUart baud btns rx = go
   counter2 :: (HiddenClockResetEnable dom) => Signal dom (Signed 10)
   counter2 = register 40 $ satAdd SatWrap 1 <$> counter2
 
-  Circuit main = circuit $ \(rxBit) -> do
-    (rxByte, txBit) <- uartDf baud -< (txByte, rxBit)
-    packet <-
-      ila
-        ( ilaConfig
-            d100
-            20
-            "name"
-            ( ilaProbe
-                (counter0, "c0")
-                (counter1, "c1")
-                (counter2, "c2")
-            )
+  Circuit demoIla = ilaUart
+    baud
+    ( ilaConfig
+        d100
+        20
+        "toplevel"
+        ( ilaProbe
+          (counter0, "c0")
+          (counter1, "c1")
+          (counter2, "c2")
         )
-        ((==300) <$> counter0)
-        (pure True)
-        -< rxByte
-    txByte <- ps2df <| dropMeta -< packet
-    idC -< txBit
+    )
+    ((==300) <$> counter0)
 
-  go = snd $ main (rx, pure ())
+  txBit = snd $ demoIla (rx, pure ())
+
+  off = pure $ Pmod8LD False False False False False False False False 
+
+  go = (off, txBit)
 
 -- | The top entity
 topEntity ::
@@ -98,7 +96,9 @@ topEntity ::
   "BTN" ::: Reset Dom48 ->
   "PMOD3" ::: Signal Dom48 PmodBTN ->
   "PMOD1_6" ::: Signal Dom48 Bit ->
-  "PMOD1_5" ::: Signal Dom48 Bit
+  ( "PMOD2" ::: Signal Dom48 Pmod8LD
+  , "PMOD1_5" ::: Signal Dom48 Bit
+  )
 topEntity clk rst btn = withClockResetEnable clk rst enableGen (topLogicUart (SNat @9600) (pack <$> btn))
 
 makeTopEntity 'topEntity

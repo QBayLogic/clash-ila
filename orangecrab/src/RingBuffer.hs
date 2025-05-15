@@ -1,9 +1,12 @@
+{-# LANGUAGE OverloadedRecordDot #-}
+{-# LANGUAGE DuplicateRecordFields #-}
+{-# LANGUAGE NoFieldSelectors #-}
+
 module RingBuffer where
 
 import Clash.Prelude
 import Protocols
 import Protocols.PacketStream
-import Protocols.Wishbone
 
 {- | A non-conventional ring buffer, capable of writing data to the tail of the buffer, overwriting old data
 Can read from any point within the buffer specified by the index
