@@ -33,6 +33,7 @@ import Data.Either
 import Data.Hashable (Hashable, hash)
 import Data.Monoid (Ap (getAp))
 import Data.Word (Word32)
+import Data.ByteString.Lazy.UTF8 qualified as LUTF8
 
 {- | From a tuple consisting of a signal and a string, grab the bit width of the signal and put it
 in a vector. At the same time, bundle every signal together.

@@ -70,6 +70,7 @@ common common-options
     clash-protocols,
     string-interpolate,
     prettyprinter,
+    utf8-string,
     mtl,
     lens,
     pretty-show,
