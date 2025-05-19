@@ -10,10 +10,11 @@ use wishbone::WbTransaction;
 
 mod communication;
 mod config;
-mod trigger;
 mod tui;
 mod vcd;
 mod wishbone;
+mod predicates_tui;
+mod ui;
 
 #[derive(Parser, Debug)]
 #[command(version, about)]
@@ -89,25 +90,26 @@ impl ParseSubcommand for MonitorArgs {
 
 impl ParseSubcommand for TuiArgs {
     fn parse(self) {
-        let mut tx_port = find_specified_port(&self.port, self.baud);
+        //let mut tx_port = find_specified_port(&self.port, self.baud);
         let config = config::read_config(&self.config)
             .expect(&format!("File at {:?} contained errors", &self.config));
-
-        match perform_register_operation(&mut tx_port, &config, &IlaRegisters::Hash(config.hash)) {
-            Ok(RegisterOutput::Hash(true)) => {},
-            Ok(_) => {
-                println!("Provided config hash and ILA hash do not match!");
-                return;
-            },
-            Err(err) => {
-                println!("Failed to send ILA: {err}");
-                panic!("Failed to check for the ILA hash");
-            },
-        }
+        //
+        //match perform_register_operation(&mut tx_port, &config, &IlaRegisters::Hash(config.hash)) {
+        //    Ok(RegisterOutput::Hash(true)) => {},
+        //    Ok(_) => {
+        //        println!("Provided config hash and ILA hash do not match!");
+        //        return;
+        //    },
+        //    Err(err) => {
+        //        println!("Failed to send ILA: {err}");
+        //        panic!("Failed to check for the ILA hash");
+        //    },
+        //}
 
         let Ok(mut session) = tui::TuiSession::new(&config) else {
             return;
         };
+        let tx_port = std::io::Cursor::new(Vec::new());
         session.main_loop(tx_port);
     }
 }

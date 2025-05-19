@@ -10,7 +10,6 @@ use crossterm::{
 use ratatui::{
     backend::CrosstermBackend,
     layout::{Constraint, Layout, Margin, Rect},
-    style::Style,
     widgets::*,
     *,
 };
@@ -19,6 +18,8 @@ use crate::communication::{
     perform_register_operation, IlaRegisters, RegisterOutput, SignalCluster,
 };
 use crate::config::IlaConfig;
+use crate::predicates_tui::{Selected as PredSelected, State as PredState};
+use crate::ui::textinput::{TextPrompt, TextPromptState};
 use crate::vcd::write_to_vcd;
 
 /// The keybind text displayed in the TUI
@@ -42,12 +43,14 @@ enum PromptReason {
 }
 
 /// The state of the TUI
-#[derive(Debug, PartialEq, Eq, Clone)]
-enum TuiState {
+#[derive(Debug, Clone)]
+enum TuiState<'a> {
     /// The TUI is in an idle state
     Main,
     /// The TUI is currently prompting the user for input
-    InPrompt(TextPromptState),
+    InPrompt(TextPromptState<PromptReason>),
+    /// Manages the trigger predicates
+    Predicates(PredState<'a>),
 }
 
 /// A TUI session
@@ -59,7 +62,7 @@ pub struct TuiSession<'a> {
     /// The terminal backend to render the TUI on
     term: Terminal<CrosstermBackend<io::Stdout>>,
     /// In what state is the TUI currently at?
-    state: TuiState,
+    state: TuiState<'a>,
     /// The ILA configuration, specifying certain aspects of the ILA
     config: &'a IlaConfig,
     /// A log for interactions to log their activity too, regularly gets truncated to fit the
@@ -89,8 +92,7 @@ impl<'a> TuiSession<'a> {
         })
     }
 
-    /// Render the TUI
-    pub fn render(&mut self) {
+    fn render_main(&mut self) {
         let _ = self.term.draw(|f| {
             let size = f.area();
             let title_block = Block::default()
@@ -152,6 +154,13 @@ impl<'a> TuiSession<'a> {
                     3.min(size.height),
                 );
 
+                let title = match text_prompt.reason {
+                    PromptReason::SaveVcd => "Save VCD file (default: dump.vcd)".into(),
+                    PromptReason::ChangeTrigger => {
+                        format!("Change trigger point [0-{}]", self.config.buffer_size)
+                    }
+                };
+
                 f.render_widget(Clear, around);
                 let decoration = Block::default().title(title).borders(Borders::ALL);
                 f.render_widget(decoration, around);
@@ -168,10 +177,21 @@ impl<'a> TuiSession<'a> {
         });
     }
 
+    /// Render the TUI
+    pub fn render(&mut self) {
+        match &mut self.state {
+            TuiState::Main => self.render_main(),
+            TuiState::InPrompt(_) => self.render_main(),
+            TuiState::Predicates(state) => {
+                state.render(&mut self.term);
+            }
+        }
+    }
+
     /// Handle the keypresses. Returns wether or not it should break out of the main loop or not
     fn on_key_event<T: Read + Write>(&mut self, event: KeyEvent, tx_port: &mut T) -> bool {
         match (&mut self.state, event.code, event.modifiers) {
-            (TuiState::Main, KeyCode::Char('c'), KeyModifiers::CONTROL) => {
+            (_, KeyCode::Char('c'), KeyModifiers::CONTROL) => {
                 return true;
             }
             (TuiState::Main, KeyCode::Char('r'), _) => {
@@ -197,9 +217,14 @@ impl<'a> TuiSession<'a> {
             }
             (TuiState::Main, KeyCode::Char('t'), _) => {
                 self.state = TuiState::InPrompt(TextPromptState::new(
-                    format!("Change trigger point [0-{}]", self.config.buffer_size),
                     Some("0"),
                     PromptReason::ChangeTrigger,
+                ));
+            }
+            (TuiState::Main, KeyCode::Char('p'), _) => {
+                self.state = TuiState::Predicates(PredState::new(
+                    self.config.trigger_names.clone(),
+                    &self.config.signals,
                 ));
             }
             (TuiState::Main, KeyCode::Char('1'), _) => {
@@ -220,7 +245,6 @@ impl<'a> TuiSession<'a> {
             }
             (TuiState::Main, KeyCode::Char('v'), _) => {
                 self.state = TuiState::InPrompt(TextPromptState::new(
-                    "Save VCD file (default: dump.vcd)",
                     Some("dump.vcd"),
                     PromptReason::SaveVcd,
                 ));
@@ -273,28 +297,8 @@ impl<'a> TuiSession<'a> {
 
                 self.state = TuiState::Main;
             }
-            (TuiState::InPrompt(text_prompt), KeyCode::Char(c), _) => {
-                text_prompt.input.insert(text_prompt.cursor, c);
-                text_prompt.right();
-            }
-            (TuiState::InPrompt(text_prompt), KeyCode::Backspace, _) => {
-                if text_prompt.cursor != 0 && text_prompt.cursor <= text_prompt.input.len() {
-                    text_prompt.input.remove(text_prompt.cursor - 1);
-                    text_prompt.left();
-                }
-            }
-            (TuiState::InPrompt(text_prompt), KeyCode::Delete, _) => {
-                if text_prompt.cursor != text_prompt.input.len()
-                    && text_prompt.cursor <= text_prompt.input.len()
-                {
-                    text_prompt.input.remove(text_prompt.cursor);
-                }
-            }
-            (TuiState::InPrompt(text_prompt), KeyCode::Left, _) => {
-                text_prompt.left();
-            }
-            (TuiState::InPrompt(text_prompt), KeyCode::Right, _) => {
-                text_prompt.right();
+            (TuiState::InPrompt(text_prompt), keycode, _) => {
+                text_prompt.handle_input(keycode);
             }
             _ => (),
         }
@@ -311,8 +315,29 @@ impl<'a> TuiSession<'a> {
         self.render();
 
         loop {
-            if let Ok(true) = poll(Duration::ZERO) {
-                let event = match read() {
+            if let Ok(true) = poll(Duration::from_secs(1)) {
+                let raw_event = read();
+
+                // This is structured a bit weirdly, due to me not expecting the TUI to be very
+                // complicated at first. It expanded more than I initially anticipated
+                //
+                // Rewriting it would take quite some time, time I do not have at the moment
+                if let TuiState::Predicates(state) = &mut self.state {
+                    match raw_event {
+                        Ok(event) => {
+                            let stop_program = state.handle_event(&event);
+                            self.render();
+                            if stop_program {
+                                break;
+                            } else {
+                                continue;
+                            }
+                        }
+                        Err(_) => (),
+                    }
+                }
+
+                let event = match raw_event {
                     Ok(TuiEvent::Key(key)) => key,
                     Ok(TuiEvent::Resize(..)) => {
                         self.render();

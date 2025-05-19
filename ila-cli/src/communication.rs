@@ -1,5 +1,4 @@
 use crate::config::IlaConfig;
-use crate::trigger::TriggerOp;
 use crate::wishbone::WbTransaction;
 use bitvec::prelude::{BitVec, Msb0};
 use bitvec::store::BitStore;

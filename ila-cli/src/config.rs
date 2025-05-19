@@ -4,19 +4,21 @@ use std::path::Path;
 use serde_json;
 use serde;
 
-#[derive(Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct IlaSignal {
     pub name: String,
     pub width: usize
 }
 
-#[derive(Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct IlaConfig {
     pub toplevel: String,
     #[serde(rename = "bufferSize")]
     pub buffer_size: usize,
     pub hash: u32,
     pub signals: Vec<IlaSignal>,
+    #[serde(rename = "triggerNames")]
+    pub trigger_names: Vec<String>,
 }
 
 impl IlaConfig {
