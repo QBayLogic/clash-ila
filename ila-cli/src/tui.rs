@@ -41,96 +41,6 @@ enum PromptReason {
     ChangeTrigger,
 }
 
-/// The state for the TextPrompt widget
-#[derive(Debug, PartialEq, Eq, Clone)]
-struct TextPromptState {
-    /// The title of the widget
-    title: String,
-    /// The input field, gets appended to as the user types
-    input: String,
-    /// The location of the cursor within the buffer, note that this is NOT the location on screen!
-    cursor: usize,
-    /// The calculated offset the curser has in relation to the on screen text
-    cursor_offset: usize,
-    /// A number indicating how many characters should be skipped before displaying visible text on
-    /// screen
-    visible: usize,
-    /// The minimum and maximum bounds that text can be displayed on. These simply mean available
-    /// space, not actual occupied space by text
-    render_bounds: (u16, u16),
-    /// The reason for this prompt to be prompted
-    reason: PromptReason,
-}
-
-impl TextPromptState {
-    /// Create a new TextPromptState
-    fn new<S0, S1>(title: S0, default: Option<S1>, reason: PromptReason) -> TextPromptState
-    where
-        S0: Into<String>,
-        S1: Into<String>,
-    {
-        let def = default.map(|s| s.into()).unwrap_or(String::new());
-        let len = def.len();
-        TextPromptState {
-            title: title.into(),
-            input: def,
-            cursor: len,
-            cursor_offset: 0,
-            visible: 0,
-            render_bounds: (u16::MIN, u16::MAX),
-            reason,
-        }
-    }
-
-    /// Calculate from what point the text should be visible
-    fn calculate_visible(&mut self, area: Rect) {
-        self.visible = self
-            .input
-            .len()
-            .saturating_sub(area.width as usize)
-            .saturating_sub(self.cursor_offset);
-    }
-
-    /// Move the cursor one step to the left
-    fn left(&mut self) {
-        self.cursor = self.cursor.saturating_sub(1);
-        if self.cursor != 0 && self.get_cursor_x() == self.render_bounds.0 {
-            self.cursor_offset = (self.cursor_offset + 1).min(self.input.len())
-        }
-    }
-
-    /// Move the cursor one step to the right
-    fn right(&mut self) {
-        self.cursor = self.input.len().min(self.cursor + 1);
-        if self.cursor != self.input.len() && self.get_cursor_x() == self.render_bounds.1 {
-            self.cursor_offset = self.cursor_offset.saturating_sub(1);
-        }
-    }
-
-    /// Calculate where the cursor should be placed in the TUI
-    fn get_cursor_x(&self) -> u16 {
-        (self.render_bounds.0 + self.cursor.saturating_sub(self.visible) as u16)
-            .min(self.render_bounds.1)
-    }
-}
-
-#[derive(Debug, PartialEq, Eq, Clone)]
-struct TextPrompt;
-
-impl StatefulWidget for TextPrompt {
-    type State = TextPromptState;
-
-    fn render(self, area: layout::Rect, buf: &mut buffer::Buffer, state: &mut Self::State) {
-        let limit: String = state
-            .input
-            .chars()
-            .skip(state.visible)
-            .take(area.width as usize)
-            .collect();
-        buf.set_string(area.x, area.y, limit, Style::default());
-    }
-}
-
 /// The state of the TUI
 #[derive(Debug, PartialEq, Eq, Clone)]
 enum TuiState {
@@ -243,9 +153,7 @@ impl<'a> TuiSession<'a> {
                 );
 
                 f.render_widget(Clear, around);
-                let decoration = Block::default()
-                    .title(text_prompt.title.as_str())
-                    .borders(Borders::ALL);
+                let decoration = Block::default().title(title).borders(Borders::ALL);
                 f.render_widget(decoration, around);
 
                 let center = Rect::new(
@@ -255,12 +163,7 @@ impl<'a> TuiSession<'a> {
                     around.height.saturating_sub(2),
                 );
 
-                text_prompt.calculate_visible(center);
-                text_prompt.render_bounds.0 = center.x;
-                text_prompt.render_bounds.1 = center.x + center.width;
-
-                f.set_cursor(text_prompt.get_cursor_x(), center.y);
-                f.render_stateful_widget(TextPrompt, center, text_prompt);
+                text_prompt.render(center, f, true);
             }
         });
     }

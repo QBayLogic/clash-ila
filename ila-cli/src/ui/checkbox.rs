@@ -96,14 +96,9 @@ impl Checkbox {
         Some(())
     }
 
-
     /// Retrieve all the marked checkbox items
-    pub fn get_all_marked(&self) -> Vec<String> {
-        self.items
-            .iter()
-            .filter_map(|(s, b)| b.then_some(s))
-            .cloned()
-            .collect()
+    pub fn get_all_marked(&self) -> Vec<bool> {
+        self.items.iter().map(|(_, marked)| *marked).collect()
     }
 
     /// Manages input given to this widget

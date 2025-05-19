@@ -88,8 +88,8 @@ impl Listbox {
     }
 
     /// Get the selected item
-    pub fn get_selected(&mut self) -> String {
-        self.items[self.selected].clone()
+    pub fn get_selected(&mut self) -> usize {
+        self.selected
     }
 
     /// Manages input given to this widget
