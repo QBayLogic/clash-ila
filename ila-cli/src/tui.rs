@@ -1,4 +1,5 @@
 use std::io::{Read, Write};
+use std::time::Instant;
 use std::{io, time::Duration};
 
 use crossterm::event::{Event as TuiEvent, KeyEvent, KeyModifiers};
@@ -7,6 +8,9 @@ use crossterm::{
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
+use ratatui::style::palette::tailwind::RED;
+use ratatui::style::Stylize;
+use ratatui::text::{Line, Text};
 use ratatui::{
     backend::CrosstermBackend,
     layout::{Constraint, Layout, Margin, Rect},
@@ -69,6 +73,10 @@ pub struct TuiSession<'a> {
     log: Vec<String>,
     /// A list of signal clusters captured by the ILA
     captured: Vec<SignalCluster>,
+    /// Checks if the predicate is triggered or not
+    triggered: bool,
+    /// The time since the last triggered check has been performed
+    last_trigger_check: Instant,
 }
 
 impl<'a> TuiSession<'a> {
@@ -88,6 +96,8 @@ impl<'a> TuiSession<'a> {
             config,
             log: Vec::with_capacity(64),
             captured: vec![],
+            triggered: false,
+            last_trigger_check: Instant::now(),
         })
     }
 
@@ -129,8 +139,20 @@ impl<'a> TuiSession<'a> {
             let help_menu = Paragraph::new(KEYBIND_TEXT)
                 .block(Block::default().title("Keybinds").borders(Borders::ALL));
             let info_menu_block = Block::default().title("Info").borders(Borders::ALL);
-            let info_info_section =
-                Paragraph::new(format!("Received {} captures", self.captured.len()));
+            let info_info_section = Paragraph::new(Text::from_iter([
+                Line::from_iter([
+                    "Received ".into(),
+                    self.captured.len().to_string().bold().blue(),
+                    " captured".into(),
+                ]),
+                Line::from_iter([
+                    "The ILA is ".into(),
+                    match self.triggered {
+                        true => "TRIGGERED".bold().green(),
+                        false => "NOT TRIGGERED".bold().red(),
+                    },
+                ]),
+            ]));
             let info_log_section = Paragraph::new(
                 self.log
                     .iter()
@@ -201,17 +223,34 @@ impl<'a> TuiSession<'a> {
                 }
             }
             (TuiState::Main, KeyCode::Char(' '), _) => {
-                let indices: Vec<u32> = (0_u32..self.config.buffer_size as u32).collect();
-                match perform_register_operation(
+                self.triggered = match perform_register_operation(
                     tx_port,
                     &self.config,
-                    &IlaRegisters::Buffer(indices),
+                    &IlaRegisters::TriggerState,
                 ) {
-                    Ok(RegisterOutput::BufferContent(cluster)) => self.captured.push(cluster),
-                    Ok(_) => self
-                        .log
-                        .push(format!("Unexpected output when reading buffer")),
-                    Err(err) => self.log.push(format!("Error: {err}")),
+                    Ok(RegisterOutput::TriggerState(state)) => state,
+                    _ => {
+                        self.log.push("Unable to check for trigger status".into());
+                        false
+                    }
+                };
+
+                if !self.triggered {
+                    self.log
+                        .push("System is not triggered, refusing to read samples".into());
+                } else {
+                    let indices: Vec<u32> = (0_u32..self.config.buffer_size as u32).collect();
+                    match perform_register_operation(
+                        tx_port,
+                        &self.config,
+                        &IlaRegisters::Buffer(indices),
+                    ) {
+                        Ok(RegisterOutput::BufferContent(cluster)) => self.captured.push(cluster),
+                        Ok(_) => self
+                            .log
+                            .push(format!("Unexpected output when reading buffer")),
+                        Err(err) => self.log.push(format!("Error: {err}")),
+                    }
                 }
             }
             (TuiState::Main, KeyCode::Char('t'), _) => {
@@ -230,22 +269,6 @@ impl<'a> TuiSession<'a> {
                     );
                 }
             }
-            //(TuiState::Main, KeyCode::Char('1'), _) => {
-            //    perform_register_operation(tx_port, &self.config, &IlaRegisters::TriggerSelect(1))
-            //        .expect("cri");
-            //    perform_register_operation(
-            //        tx_port,
-            //        &self.config,
-            //        &IlaRegisters::Compare(vec![0x00, 0x00, 0x00, 0xc8]),
-            //    )
-            //    .expect("cri");
-            //    perform_register_operation(
-            //        tx_port,
-            //        &self.config,
-            //        &IlaRegisters::Mask(vec![0x00, 0x00, 0x01, 0xff]),
-            //    )
-            //    .expect("cri");
-            //}
             (TuiState::Main, KeyCode::Char('v'), _) => {
                 self.state = TuiState::InPrompt(TextPromptState::new(
                     Some("dump.vcd"),
@@ -318,7 +341,7 @@ impl<'a> TuiSession<'a> {
         self.render();
 
         loop {
-            if let Ok(true) = poll(Duration::from_secs(1)) {
+            if let Ok(true) = poll(Duration::from_millis(100)) {
                 let raw_event = read();
 
                 // This is structured a bit weirdly, due to me not expecting the TUI to be very
@@ -359,6 +382,24 @@ impl<'a> TuiSession<'a> {
                 if self.on_key_event(event, &mut tx_port) {
                     break;
                 };
+            }
+
+            let now = Instant::now();
+            let duration = now.duration_since(self.last_trigger_check);
+            if duration >= Duration::from_millis(500) {
+                self.triggered = match perform_register_operation(
+                    &mut tx_port,
+                    &self.config,
+                    &IlaRegisters::TriggerState,
+                ) {
+                    Ok(RegisterOutput::TriggerState(state)) => state,
+                    _ => {
+                        self.log.push("Unable to check for trigger status".into());
+                        false
+                    }
+                };
+
+                self.render();
             }
         }
     }

@@ -284,6 +284,8 @@ pub enum IlaRegisters {
     Capture(bool),
     /// Register re-arming the trigger (and clear the buffer)
     TriggerReset,
+    /// Checks the ILA for it's triggered status
+    TriggerState,
     /// Register controlling how many samples it should store after triggering
     TriggerPoint(u32),
     /// The value to mask the samples against before triggering
@@ -296,18 +298,15 @@ pub enum IlaRegisters {
     /// out-of-date
     Hash(u32),
     /// How the trigger should handle mutliple predicates
-    ///
-    /// None means it will read rather than write
     TriggerOp(ReadWrite<(), PredicateOperation>),
     /// Which predicates are active for the trigger
-    ///
-    /// None means it will read rather than write
     TriggerSelect(ReadWrite<(), u32>),
 }
 
 /// Output of the register whenever a read operation is performed on the ILA.
 pub enum RegisterOutput {
     None,
+    TriggerState(bool),
     BufferContent(SignalCluster),
     Mask(SignalCluster),
     Compare(SignalCluster),
@@ -321,6 +320,7 @@ impl IlaRegisters {
     pub fn address(&self) -> (u32, [bool; 4]) {
         match self {
             IlaRegisters::Capture(_) => (0x0000_0000, [false, false, false, true]),
+            IlaRegisters::TriggerState => (0x0000_0000, [false, false, true, false]),
             IlaRegisters::TriggerReset => (0x0000_0000, [false, false, true, false]),
             IlaRegisters::TriggerPoint(_) => (0x0000_0001, [true; 4]),
             IlaRegisters::Hash(_) => (0x0000_0002, [true; 4]),
@@ -337,6 +337,10 @@ impl IlaRegisters {
     pub fn translate_output(&self, ila: &IlaConfig, output: &Vec<u32>) -> RegisterOutput {
         match self {
             IlaRegisters::Capture(_) => RegisterOutput::None,
+            IlaRegisters::TriggerState => RegisterOutput::TriggerState(match output.get(0) {
+                Some(1) => true,
+                _ => false,
+            }),
             IlaRegisters::TriggerReset => RegisterOutput::None,
             IlaRegisters::TriggerPoint(_) => RegisterOutput::None,
             IlaRegisters::Mask(ReadWrite::Read(_)) => {
@@ -376,6 +380,7 @@ impl IlaRegisters {
             IlaRegisters::Capture(capture) => {
                 WbTransaction::new_writes(byte_select, addr, vec![*capture as u32])
             }
+            IlaRegisters::TriggerState => WbTransaction::new_reads(byte_select, addr, vec![0]),
             IlaRegisters::TriggerReset => WbTransaction::new_writes(byte_select, addr, vec![1]),
             IlaRegisters::TriggerPoint(trig_point) => {
                 WbTransaction::new_writes(byte_select, addr, vec![*trig_point])
