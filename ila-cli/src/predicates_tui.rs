@@ -1,41 +1,37 @@
-use std::{io::Stdout, ops::AddAssign};
+use std::{
+    io::{Read, Stdout, Write},
+    time::Duration,
+};
 
 use crate::{
-    config::IlaSignal,
-    ui::textinput::{TextPrompt, TextPromptState},
+    communication::{IlaPredicate, PredicateOperation, PredicateTarget, Signal, SignalCluster},
+    config::{IlaConfig, IlaSignal},
+    ui::textinput::TextPromptState,
+};
+use bitvec::{
+    order::{Lsb0, Msb0},
+    vec::BitVec,
+    view::BitView,
 };
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
-use num::{bigint::ParseBigIntError, BigUint, Num};
+use num::{
+    bigint::{ParseBigIntError, Sign},
+    BigInt, BigUint, Num,
+};
 use ratatui::{
-    layout::{Constraint, Flex, Layout, Margin, Offset, Rect},
+    layout::{Constraint, Flex, Layout, Margin, Rect},
     prelude::CrosstermBackend,
     style::Stylize,
-    widgets::{Block, Borders, Tabs, WidgetRef},
+    widgets::{Block, Borders, Paragraph, Tabs, WidgetRef},
     Frame, Terminal,
 };
 
 use crate::ui::checkbox::Checkbox;
 use crate::ui::listbox::Listbox;
 
-#[derive(Debug, Clone, PartialEq)]
-pub enum PredicateOperation {
-    And,
-    Or,
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub enum PredicateTarget {
-    Trigger,
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub struct IlaPredicates {
-    pub target: PredicateTarget,
-    pub operation: PredicateOperation,
-    pub trigger_select: u32,
-    pub mask: Vec<u8>,
-    pub compare: Vec<u8>,
-}
+const HELP_MESSAGE: &str = r#"CTRL-LEFT and CTRL-RIGHT to navigate tabs
+UP and DOWN to navigate between elements
+ENTER to save changes, ESC to discard"#;
 
 trait PredicatePage {
     /// Render the predicate page
@@ -64,7 +60,8 @@ impl NumericState {
             Some("0X") => NumericState::Hex,
             Some("0b") => NumericState::Binary,
             Some("0B") => NumericState::Binary,
-            Some("08") => NumericState::Octal,
+            Some("0o") => NumericState::Octal,
+            Some("0O") => NumericState::Octal,
             _ => NumericState::Decimal,
         }
     }
@@ -102,6 +99,9 @@ impl NumericState {
     }
 }
 
+/// General predicate page
+///
+/// Displays the trigger selection and trigger operation
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct GeneralPage;
 
@@ -178,13 +178,17 @@ impl PredicatePage for GeneralPage {
     }
 }
 
+/// Predicate mask and compare page
+///
+/// Due to both looking similar and sharing a lot of functionality, they are merged into a single
+/// page but with a bool to distinguish the two.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct MaskComparePage {
     is_mask: bool,
 }
 
 impl MaskComparePage {
-    fn get_input_states<'a>(&self, state: &'a mut State) -> &'a mut Vec<TextPromptState<usize>> {
+    fn get_input_states<'a>(&self, state: &'a mut State) -> &'a mut Vec<TextPromptState<()>> {
         match self.is_mask {
             true => &mut state.mask_state,
             false => &mut state.compare_state,
@@ -225,7 +229,7 @@ impl PredicatePage for MaskComparePage {
                 .zip(signals)
                 .all(|(input_state, signal)| {
                     NumericState::immediate_parse(&input_state.input)
-                        .is_ok_and(|uint| uint <= BigUint::new(vec![2]).pow(signal.width as u32))
+                        .is_ok_and(|uint| uint < BigUint::new(vec![2]).pow(signal.width as u32))
                 });
         let is_valid_label = match is_valid {
             true => "Provided input is valid".green(),
@@ -238,11 +242,10 @@ impl PredicatePage for MaskComparePage {
         for (index, signal) in state.signals.iter().enumerate() {
             let element_active = index == state.mask_compare_cursor_position;
 
-            let signal_label = format!(
-                " {} - input range [0 - {:#x}] ",
-                signal.name,
-                BigUint::new(vec![2]).pow(signal.width as u32)
-            );
+            let mut max_bound = BigInt::new(Sign::Plus, vec![2]).pow(signal.width as u32);
+            max_bound += BigInt::new(Sign::Minus, vec![1]);
+
+            let signal_label = format!(" {} - input range [0 - {:#x}] ", signal.name, max_bound);
 
             let borders = Block::new().title(signal_label).borders(Borders::ALL);
 
@@ -293,6 +296,7 @@ impl PredicatePage for MaskComparePage {
     }
 }
 
+/// The different tabs for the predicate UI
 #[derive(Debug, Clone, PartialEq)]
 enum Tab {
     General(GeneralPage),
@@ -300,10 +304,12 @@ enum Tab {
 }
 
 impl Tab {
+    /// The names for each tab
     fn names() -> [&'static str; 3] {
         ["General", "Mask", "Compare"]
     }
 
+    /// The index of the current tab
     fn index(&self) -> usize {
         match self {
             Tab::General(_) => 0,
@@ -312,6 +318,7 @@ impl Tab {
         }
     }
 
+    /// Go to the previous tab
     fn prev(&self) -> Tab {
         match self {
             Tab::General(_) => Tab::MaskCompare(MaskComparePage { is_mask: false }),
@@ -322,6 +329,7 @@ impl Tab {
         }
     }
 
+    /// Go to the next tab
     fn next(&self) -> Tab {
         match self {
             Tab::General(_) => Tab::MaskCompare(MaskComparePage { is_mask: true }),
@@ -332,6 +340,7 @@ impl Tab {
         }
     }
 
+    /// Render the current tab
     fn render(&self, state: &mut State, f: &mut Frame<'_>, area: Rect) {
         match self {
             Tab::General(page) => page.render(state, f, area),
@@ -340,73 +349,158 @@ impl Tab {
     }
 }
 
+/// The response of the predicate UI on input events
+#[derive(Debug, Clone)]
+pub enum PredicateEventResponse {
+    /// Close the program
+    QuitProgram,
+    /// Return to the main menu and display a message in the log
+    MainMenu(String),
+    /// Do nothing, remain in the predicate UI
+    Nothing,
+}
+
+/// What option is selected in the general predicate page
 #[derive(Debug, Clone)]
 pub enum Selected {
     Operation,
     Select,
 }
 
+/// The state of the predicate UI
 #[derive(Debug, Clone)]
 pub struct State<'a> {
+    /// The current tab
     tab: Tab,
+    /// The current option selected in the general page
     selected: Selected,
-    predicates: IlaPredicates,
+    /// The state for the predicate operation
     predicate_op_ui_state: Listbox,
+    /// The state for the predicate select
     predicate_select_ui_state: Checkbox,
+    /// Metadata over the signals the ILA is expected to process
     signals: &'a [IlaSignal],
+    /// Which element is selected on the mask/compare tabs
     mask_compare_cursor_position: usize,
-    mask_state: Vec<TextPromptState<usize>>,
-    compare_state: Vec<TextPromptState<usize>>,
+    /// The mask tab text input states
+    mask_state: Vec<TextPromptState<()>>,
+    /// The compare tab text input states
+    compare_state: Vec<TextPromptState<()>>,
 }
 
 impl<'a> State<'_> {
-    pub fn new(predicate_names: Vec<String>, signals: &[IlaSignal]) -> State {
+    /// Create a new predicates configuration interface
+    ///
+    /// An initial `IlaPredicate` configuration has to be provided to set the initial values within
+    /// the UI. This UI will take up the entire screen
+    pub fn new(ila: &IlaConfig, predicate: IlaPredicate) -> State {
+        /// Convert a BitVec into a vector of words
+        fn bitvec_to_words(v: &BitVec<u8, Msb0>) -> Vec<u32> {
+            v.chunks(32)
+                .map(|slice| {
+                    let mut word = 0;
+                    for bit in slice.iter() {
+                        word = (word << 1) | (*bit as u32);
+                    }
+                    word
+                })
+                .collect()
+        }
+
+        /// Create the text prompts from a `SignalCluster`
+        fn signals_to_prompts(data: SignalCluster) -> Vec<TextPromptState<()>> {
+            data.cluster
+                .iter()
+                .filter_map(|signal| {
+                    signal
+                        .samples
+                        .get(0)
+                        .map(|sample| (bitvec_to_words(sample), signal.width))
+                })
+                .map(|(v, width)| {
+                    BigInt::new(Sign::Plus, v).clamp(
+                        BigInt::new(Sign::Plus, vec![0]),
+                        BigInt::new(Sign::Plus, vec![2]).pow(width as u32)
+                            - BigInt::new(Sign::Plus, vec![1]),
+                    )
+                })
+                .map(|byte_vec| {
+                    TextPromptState::new(Some(format!("0x{}", byte_vec.to_str_radix(16))), ())
+                })
+                .collect()
+        }
+
         State {
             tab: Tab::General(GeneralPage),
             selected: Selected::Operation,
-            predicates: IlaPredicates {
-                target: PredicateTarget::Trigger,
-                operation: PredicateOperation::Or,
-                trigger_select: 0,
-                mask: Vec::new(),
-                compare: Vec::new(),
-            },
             predicate_op_ui_state: {
-                let mut list = Listbox::new(vec!["OR", "AND"], 0);
+                let mut list = Listbox::new(vec!["AND", "OR"], predicate.operation as usize);
                 list.set_focus(true);
                 list
             },
-            predicate_select_ui_state: Checkbox::new(predicate_names),
-            signals,
+            predicate_select_ui_state: {
+                let mut checkbox = Checkbox::new(ila.trigger_names.clone());
+                for (index, bit) in predicate
+                    .predicate_select
+                    .view_bits::<Lsb0>()
+                    .iter()
+                    .enumerate()
+                {
+                    let _ = checkbox.set_marked(index, *bit);
+                }
+                checkbox
+            },
+            signals: &ila.signals,
             mask_compare_cursor_position: 0,
-            mask_state: vec![TextPromptState::new(None::<String>, 0_usize); signals.len()],
-            compare_state: vec![TextPromptState::new(None::<String>, 0_usize); signals.len()],
+            mask_state: signals_to_prompts(predicate.mask),
+            compare_state: signals_to_prompts(predicate.compare),
         }
     }
 
+    /// Render the predicate UI
     pub fn render(&mut self, terminal: &mut Terminal<CrosstermBackend<Stdout>>) {
         let _ = terminal.draw(|f| {
-            let max_area = f.area();
-            let tabs = Tabs::new(Tab::names()).select(self.tab.index());
-            f.render_widget(tabs, max_area);
+            let layout = Layout::new(
+                ratatui::layout::Direction::Vertical,
+                [
+                    Constraint::Length(1),
+                    Constraint::Fill(0),
+                    Constraint::Length(5),
+                ],
+            )
+            .flex(Flex::Start)
+            .split(f.area());
 
-            let tab_area = max_area.inner(Margin::new(0, 1));
-            f.render_widget(Block::new().borders(Borders::ALL), tab_area);
+            let tabs = Tabs::new(Tab::names()).select(self.tab.index());
+            f.render_widget(tabs, layout[0]);
+
+            f.render_widget(Block::new().borders(Borders::ALL), layout[1]);
 
             self.tab
                 .clone() // Pesky borrow
-                .render(self, f, tab_area.inner(Margin::new(1, 1)));
+                .render(self, f, layout[1].inner(Margin::new(1, 1)));
+
+            f.render_widget(
+                Paragraph::new(HELP_MESSAGE).block(Block::bordered().title("keybinds")),
+                layout[2],
+            );
         });
     }
 
+    /// Move the predicate UI to the next tab
     pub fn next_tab(&mut self) {
         self.tab = self.tab.next();
     }
 
+    /// Move the predicate UI to the previous tab
     pub fn prev_tab(&mut self) {
         self.tab = self.tab.prev();
     }
 
+    /// Handle input for the selected tab
+    ///
+    /// This shouldn't be invoked manually as it ignores 'global' keybinds, use `handle_event()`
+    /// to feed input to the predicate UI
     fn manage_page_navigation(&mut self, event: &Event) {
         match self.tab {
             Tab::General(page) => page.navigate(self, event),
@@ -414,14 +508,113 @@ impl<'a> State<'_> {
         }
     }
 
-    pub fn handle_event(&mut self, event: &Event) -> bool {
-        if match event {
+    /// Handle input for the predicate UI
+    pub fn handle_event<T>(
+        &mut self,
+        medium: &mut T,
+        ila: &IlaConfig,
+        event: &Event,
+    ) -> PredicateEventResponse
+    where
+        T: Read + Write,
+    {
+        // Handle 'global' keybinds
+        let event_consumed = match event {
             Event::Key(KeyEvent {
                 code: KeyCode::Char('c'),
                 modifiers: KeyModifiers::CONTROL,
                 ..
             }) => {
-                return true;
+                return PredicateEventResponse::QuitProgram;
+            }
+            Event::Key(KeyEvent {
+                code: KeyCode::Esc, ..
+            }) => {
+                return PredicateEventResponse::MainMenu("Cancelled changes".into());
+            }
+            Event::Key(KeyEvent {
+                code: KeyCode::Enter,
+                ..
+            }) => {
+                fn biguint_to_signal((n, signal): (BigUint, &IlaSignal)) -> Signal {
+                    let reference: BitVec<u8, Msb0> = BitVec::from_vec(n.to_bytes_be());
+                    let mut base: BitVec<u8, Msb0> = BitVec::with_capacity(signal.width);
+                    for index in (0..signal.width).rev() {
+                        base.push(match reference.len().checked_sub(index + 1) {
+                            Some(index) => reference[index],
+                            None => false,
+                        });
+                    }
+
+                    Signal {
+                        name: signal.name.clone(),
+                        width: signal.width,
+                        samples: vec![base],
+                    }
+                }
+
+                let compare: Vec<Signal> = self
+                    .compare_state
+                    .iter()
+                    .zip(&ila.signals)
+                    .filter_map(|(input_state, signal)| {
+                        NumericState::immediate_parse(&input_state.input)
+                            .ok()
+                            .map(|n| (n, signal))
+                    })
+                    .filter(|(n, signal)| *n < BigUint::new(vec![2]).pow(signal.width as u32))
+                    .map(biguint_to_signal)
+                    .collect();
+                let mask: Vec<Signal> = self
+                    .mask_state
+                    .iter()
+                    .zip(&ila.signals)
+                    .filter_map(|(input_state, signal)| {
+                        NumericState::immediate_parse(&input_state.input)
+                            .ok()
+                            .map(|n| (n, signal))
+                    })
+                    .filter(|(n, signal)| *n < BigUint::new(vec![2]).pow(signal.width as u32))
+                    .map(biguint_to_signal)
+                    .collect();
+
+                // Make sure our inputs are valid
+                if compare.len() != self.compare_state.len() || mask.len() != self.mask_state.len()
+                {
+                    return PredicateEventResponse::Nothing;
+                }
+
+                let mut selected = 0;
+                for mark in self.predicate_select_ui_state.get_all_marked().iter().rev() {
+                    selected = (selected << 1) | (*mark as u32);
+                }
+
+                let Ok(operation) =
+                    PredicateOperation::try_from(self.predicate_op_ui_state.get_selected() as u32)
+                else {
+                    return PredicateEventResponse::Nothing;
+                };
+
+                let predicate = IlaPredicate {
+                    target: PredicateTarget::Trigger,
+                    operation,
+                    predicate_select: selected,
+                    mask: SignalCluster {
+                        cluster: mask,
+                        timestamp: Duration::ZERO,
+                    },
+                    compare: SignalCluster {
+                        cluster: compare,
+                        timestamp: Duration::ZERO,
+                    },
+                };
+
+                let response = match predicate.update_ila(medium, ila) {
+                    Ok(_) => "Succesfully updated predicate state".into(),
+                    Err(err) => format!("Failed to update ILA with error {err}"),
+                };
+
+                return PredicateEventResponse::MainMenu(response);
             }
             Event::Key(KeyEvent {
                 code: KeyCode::Left,
@@ -440,12 +633,15 @@ impl<'a> State<'_> {
                 true
             }
             _ => false,
-        } {
-            return false;
+        };
+
+        if event_consumed {
+            return PredicateEventResponse::Nothing;
         }
 
+        // Give the event to the underlying tab
         self.manage_page_navigation(event);
 
-        false
+        PredicateEventResponse::Nothing
     }
 }

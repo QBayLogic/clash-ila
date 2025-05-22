@@ -15,7 +15,7 @@ use ratatui::{
 };
 
 use crate::communication::{
-    perform_register_operation, IlaRegisters, RegisterOutput, SignalCluster,
+    perform_register_operation, IlaPredicate, IlaRegisters, RegisterOutput, SignalCluster,
 };
 use crate::config::IlaConfig;
 use crate::predicates_tui::{Selected as PredSelected, State as PredState};
@@ -28,7 +28,6 @@ const KEYBIND_TEXT: &'static str = r#"  C-c   ---   Exit
   t     ---   Change trigger point
   c     ---   Change trigger logic
   r     ---   Reset trigger
-  s     ---   Request sample to be sent again
   v     ---   Write signals to VCD dump
 "#;
 
@@ -222,27 +221,31 @@ impl<'a> TuiSession<'a> {
                 ));
             }
             (TuiState::Main, KeyCode::Char('p'), _) => {
-                self.state = TuiState::Predicates(PredState::new(
-                    self.config.trigger_names.clone(),
-                    &self.config.signals,
-                ));
+                if let Ok(predicate) = IlaPredicate::from_ila(tx_port, self.config) {
+                    self.state = TuiState::Predicates(PredState::new(&self.config, predicate));
+                } else {
+                    self.log.push(
+                        "Unable to retrieve current trigger predicate configuration from the ILA"
+                            .to_string(),
+                    );
+                }
             }
-            (TuiState::Main, KeyCode::Char('1'), _) => {
-                perform_register_operation(tx_port, &self.config, &IlaRegisters::TriggerSelect(1))
-                    .expect("cri");
-                perform_register_operation(
-                    tx_port,
-                    &self.config,
-                    &IlaRegisters::Compare(vec![0x00, 0x00, 0x00, 0xc8]),
-                )
-                .expect("cri");
-                perform_register_operation(
-                    tx_port,
-                    &self.config,
-                    &IlaRegisters::Mask(vec![0x00, 0x00, 0x01, 0xff]),
-                )
-                .expect("cri");
-            }
+            //(TuiState::Main, KeyCode::Char('1'), _) => {
+            //    perform_register_operation(tx_port, &self.config, &IlaRegisters::TriggerSelect(1))
+            //        .expect("cri");
+            //    perform_register_operation(
+            //        tx_port,
+            //        &self.config,
+            //        &IlaRegisters::Compare(vec![0x00, 0x00, 0x00, 0xc8]),
+            //    )
+            //    .expect("cri");
+            //    perform_register_operation(
+            //        tx_port,
+            //        &self.config,
+            //        &IlaRegisters::Mask(vec![0x00, 0x00, 0x01, 0xff]),
+            //    )
+            //    .expect("cri");
+            //}
             (TuiState::Main, KeyCode::Char('v'), _) => {
                 self.state = TuiState::InPrompt(TextPromptState::new(
                     Some("dump.vcd"),
@@ -324,13 +327,20 @@ impl<'a> TuiSession<'a> {
                 // Rewriting it would take quite some time, time I do not have at the moment
                 if let TuiState::Predicates(state) = &mut self.state {
                     match raw_event {
-                        Ok(event) => {
-                            let stop_program = state.handle_event(&event);
+                        Ok(ref event) => {
+                            let stop_program =
+                                state.handle_event(&mut tx_port, &self.config, event);
                             self.render();
-                            if stop_program {
-                                break;
-                            } else {
-                                continue;
+
+                            match stop_program {
+                                crate::predicates_tui::PredicateEventResponse::QuitProgram => {
+                                    return
+                                }
+                                crate::predicates_tui::PredicateEventResponse::MainMenu(log) => {
+                                    self.state = TuiState::Main;
+                                    self.log.push(log);
+                                }
+                                crate::predicates_tui::PredicateEventResponse::Nothing => continue,
                             }
                         }
                         Err(_) => (),

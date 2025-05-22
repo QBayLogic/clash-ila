@@ -24,6 +24,9 @@ import Protocols.PacketStream
 import Protocols.Wishbone
 import SignalFieldSelectors
 
+import Protocols.Df qualified as Df
+import Prelude qualified
+
 {- | The buffer of the ila, with signals to control wether or not the signals get captured
 
 This function exposes the barebones of the ILA capturing logic and it will only accept boolean
@@ -213,6 +216,7 @@ readIlaMM ::
   , KnownNat n
   , 1 <= n
   , 1 <= depth
+  , 1 <= a `DivRU` 32
   , 1 <= a
   ) =>
   -- | The wishbone address
@@ -227,8 +231,14 @@ readIlaMM 0x0000_0000 0b0001 rm = Just . extend $ pack rm.capture
 readIlaMM 0x0000_0000 0b0010 rm = Just . extend $ pack rm.triggered
 readIlaMM 0x0000_0001 0b1111 rm = Just . resize $ pack rm.triggerPoint
 readIlaMM 0x0000_0003 0b0001 rm = Just . resize $ pack rm.triggerOperation
-readIlaMM 0x0000_0004 0b1111 rm = Just $ resize (rm.triggerSelect .>>. 32)
-readIlaMM 0x0000_0005 0b1111 rm = Just $ resize (rm.triggerSelect .&. 0xffff_ffff)
+readIlaMM 0x0000_0004 0b1111 rm = Just rm.triggerSelect
+readIlaMM address 0b1111 rm
+  | testBits address 0x1000_0000 0xff00_0000 =
+      Just $ getWord rm.triggerMask index
+  | testBits address 0x1100_0000 0xff00_0000 =
+      Just $ getWord rm.triggerCompare index
+ where
+  index = unpack . resize $ address .&. 0x00ff_ffff
 readIlaMM _ _ _ = Nothing
 
 -- | Tests if multiple bits (via a mask) match
@@ -282,7 +292,10 @@ writeIlaMM address 0b1111 write rm
   | testBits address 0x1100_0000 0xff00_0000 =
       (rm{triggerCompare = setWord rm.triggerCompare index write}, None)
  where
-  index = unpack . resize $ address .&. 0x00ff_ffff
+  -- We use 32 bit words, the indices incrementing writes receive is on a byte basis
+  -- To correct for this, we can simply shift right by 2 (dividing by 4)
+  wordCorrection = 2
+  index = unpack . resize $ (address .&. 0x00ff_ffff) .>>. wordCorrection
 writeIlaMM _ _ _ rm = (rm, None)
 
 {- | ILA Wishbone interface
@@ -338,25 +351,22 @@ ilaWb (IlaConfig @_ @a @depth @m depth initTriggerPoint ilaHash tracing triggers
 
     -- \| Selects the right predicate and applies it on incoming sample
     doesTrigger :: IlaRM (BitSize a) depth m -> a -> Bool
-    -- doesTrigger rm currentSample = ilaPredicateEq currentSample rm.triggerCompare rm.triggerMask
     doesTrigger rm currentSample =
-      predicateOp rm.triggerOperation $
-        imap
-          ( \index trigger ->
-              testBit rm.triggerSelect (fromIntegral index)
-                && trigger currentSample rm.triggerCompare rm.triggerMask
-          )
-          triggers
+      predicateOp rm.triggerOperation
+        $ zipWith
+          (&&)
+          (unpack $ resize rm.triggerSelect)
+          ((\trigger -> trigger currentSample rm.triggerCompare rm.triggerMask) <$> triggers)
 
     -- \| Handle WB writes and update the memory map accordingly,
     (ilaRM, ilaAction) =
-      unbundle $
-        moore
+      unbundle
+        $ moore
           ( \(oldMM, _) (wb, currentSample, capture) ->
               if inWbCycle' wb && wb.writeEnable
                 then
-                  writeIlaMM wb.addr wb.busSelect wb.writeData $
-                    updateRM (doesTrigger oldMM currentSample) capture oldMM
+                  writeIlaMM wb.addr wb.busSelect wb.writeData
+                    $ updateRM (doesTrigger oldMM currentSample) capture oldMM
                 else (updateRM (doesTrigger oldMM currentSample) capture oldMM, None)
           )
           id
