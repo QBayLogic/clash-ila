@@ -27,7 +27,7 @@ use crate::ui::textinput::{TextPrompt, TextPromptState};
 use crate::vcd::write_to_vcd;
 
 /// The keybind text displayed in the TUI
-const KEYBIND_TEXT: &'static str = r#"  CTRL-c   ---   Exit
+const KEYBIND_TEXT: &'static str = r#"  CTRL-c ---   Exit
   space  ---   Read samples (if triggered)
   t      ---   Change trigger point
   p      ---   Change trigger predicates

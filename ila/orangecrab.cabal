@@ -1,0 +1,94 @@
+cabal-version:       2.4
+name:                clash-ila
+synopsis:            clash-ila
+description:         The Clash integrated logic analyzer
+version:             0.1
+License:             MIT
+license-file:        LICENSE
+author:              QBayLogic B.V.
+maintainer:          devops@qbaylogic.com
+Copyright:           Copyright © 2024 QBayLogic B.V.
+Category:            Hardware
+
+common common-options
+  default-extensions:
+    DataKinds
+    DefaultSignatures
+    DeriveAnyClass
+    DerivingStrategies
+    LambdaCase
+    NoStarIsType
+    TypeFamilies
+    UnicodeSyntax
+    ViewPatterns
+    TemplateHaskell
+    QuasiQuotes
+    NoImplicitPrelude
+  ghc-options:
+    -Wall -Wcompat
+    -fplugin GHC.TypeLits.Extra.Solver
+    -fplugin GHC.TypeLits.Normalise
+    -fplugin GHC.TypeLits.KnownNat.Solver
+    -fconstraint-solver-iterations=8
+    -fexpose-all-unfoldings
+    -fno-worker-wrapper
+    -fno-unbox-small-strict-fields
+    -fno-unbox-strict-fields
+  default-language: GHC2021
+  build-depends:
+    base,
+    hedgehog >= 1.0.3 && < 1.6,
+    split,
+    template-haskell,
+    aeson,
+    th-abstraction,
+    th-expand-syns,
+    hashable,
+    clash-cores,
+    clash-lib,
+    clash-prelude,
+    clash-prelude-hedgehog,
+    clash-protocols,
+    string-interpolate,
+    prettyprinter,
+    mtl,
+    lens,
+    pretty-show,
+    constraints,
+    ghc-typelits-natnormalise,
+    ghc-typelits-extra,
+    ghc-typelits-knownnat
+
+library
+  import: common-options
+  hs-source-dirs: src
+  exposed-modules:
+    SignalFieldSelectors
+    Domain
+    Pmod
+    RGB
+    RingBuffer
+    Ila
+    Communication
+    ConfigGen
+    WishboneUtils
+
+test-suite unittests
+  import: common-options
+  type: exitcode-stdio-1.0
+  hs-source-dirs: tests
+  main-is: Tests.hs
+  build-depends:
+    clash-ila
+  other-modules:
+    Tests.RingBuffer
+    Tests.Communication
+
+library blink
+  import: common-options
+  hs-source-dirs: top
+  build-depends:
+    clash-ila
+  exposed-modules:
+    Blink
+

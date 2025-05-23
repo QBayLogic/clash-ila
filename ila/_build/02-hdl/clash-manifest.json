@@ -1,0 +1,207 @@
+{
+    "components": [
+        "Blink_topEntity_recordProcessorC",
+        "Blink_topEntity_recordBuilderC",
+        "Blink_topEntity_wishboneMasterC",
+        "Blink_topEntity_recordHandlerC",
+        "Blink_topEntity_probeHandlerC",
+        "Blink_topEntity_etherboneC",
+        "topEntity"
+    ],
+    "dependencies": {
+        "transitive": []
+    },
+    "domains": {
+        "Dom48": {
+            "active_edge": "Rising",
+            "init_behavior": "Defined",
+            "period": 20833,
+            "reset_kind": "Asynchronous",
+            "reset_polarity": "ActiveLow"
+        },
+        "IntelSystem": {
+            "active_edge": "Rising",
+            "init_behavior": "Defined",
+            "period": 10000,
+            "reset_kind": "Asynchronous",
+            "reset_polarity": "ActiveHigh"
+        },
+        "System": {
+            "active_edge": "Rising",
+            "init_behavior": "Defined",
+            "period": 10000,
+            "reset_kind": "Asynchronous",
+            "reset_polarity": "ActiveHigh"
+        },
+        "XilinxSystem": {
+            "active_edge": "Rising",
+            "init_behavior": "Defined",
+            "period": 10000,
+            "reset_kind": "Synchronous",
+            "reset_polarity": "ActiveHigh"
+        }
+    },
+    "files": [
+        {
+            "name": "topEntity.sdc",
+            "sha256": "d19e39eef864d4c66a4f8e475e5f75f73bbc797172108d0ee7538ff54127c884"
+        },
+        {
+            "name": "topEntity_ilaconf_BA86056BF643B6E4.json",
+            "sha256": "3fa7a92a0c39ec17945d88ea51e69ed343ab6fab3347d5bfb62d302e4e817820"
+        },
+        {
+            "name": "Blink_topEntity_recordProcessorC.v",
+            "sha256": "02645bf0cb2061c5d726ef8dc48e97b5053564587251679076b528384679acfe"
+        },
+        {
+            "name": "Blink_topEntity_recordBuilderC.v",
+            "sha256": "338b2309a5aff35978533a36ca0a83a4a2bd9940b25ce011321b226185381c88"
+        },
+        {
+            "name": "Blink_topEntity_wishboneMasterC.v",
+            "sha256": "46717c4d6d8935c3a4578ddba0d11ea8c85a63380ac4815aa9b172d7b80a6521"
+        },
+        {
+            "name": "Blink_topEntity_recordHandlerC.v",
+            "sha256": "b60b3c1e5d9a0b9f2ae49b1f7a19b4e8ac4bafa37515c50e4b8734d0c5727af2"
+        },
+        {
+            "name": "Blink_topEntity_probeHandlerC.v",
+            "sha256": "57e139008c4671ef009a96e0f1301cf3432961d76956cd30ad1cf0a1dc6d6564"
+        },
+        {
+            "name": "Blink_topEntity_etherboneC.v",
+            "sha256": "69f8ea0275b14b054905f8e773c2bd6b64fa2efb33bb71bf2eecc757060cf70e"
+        },
+        {
+            "name": "topEntity.v",
+            "sha256": "0ad0cb791405fa5536be4486f9fc37e9871dbea6751efc24c7aa47a106d78cfc"
+        }
+    ],
+    "flags": [
+        20,
+        20
+    ],
+    "hash": "77fd7a70fee13cab03a4c801e890bbd22a6cd7d2ff6089994b3f980128d4a39e",
+    "top_component": {
+        "name": "topEntity",
+        "ports_flat": [
+            {
+                "direction": "in",
+                "domain": "Dom48",
+                "is_clock": true,
+                "name": "CLK",
+                "type_name": "",
+                "width": 1
+            },
+            {
+                "direction": "in",
+                "domain": "Dom48",
+                "is_clock": false,
+                "name": "BTN",
+                "type_name": "",
+                "width": 1
+            },
+            {
+                "direction": "in",
+                "is_clock": false,
+                "name": "PMOD3_7",
+                "type_name": "",
+                "width": 1
+            },
+            {
+                "direction": "in",
+                "is_clock": false,
+                "name": "PMOD3_6",
+                "type_name": "",
+                "width": 1
+            },
+            {
+                "direction": "in",
+                "is_clock": false,
+                "name": "PMOD3_5",
+                "type_name": "",
+                "width": 1
+            },
+            {
+                "direction": "in",
+                "is_clock": false,
+                "name": "PMOD3_4",
+                "type_name": "",
+                "width": 1
+            },
+            {
+                "direction": "in",
+                "is_clock": false,
+                "name": "PMOD1_6",
+                "type_name": "",
+                "width": 1
+            },
+            {
+                "direction": "out",
+                "is_clock": false,
+                "name": "PMOD2_7",
+                "type_name": "",
+                "width": 1
+            },
+            {
+                "direction": "out",
+                "is_clock": false,
+                "name": "PMOD2_6",
+                "type_name": "",
+                "width": 1
+            },
+            {
+                "direction": "out",
+                "is_clock": false,
+                "name": "PMOD2_5",
+                "type_name": "",
+                "width": 1
+            },
+            {
+                "direction": "out",
+                "is_clock": false,
+                "name": "PMOD2_4",
+                "type_name": "",
+                "width": 1
+            },
+            {
+                "direction": "out",
+                "is_clock": false,
+                "name": "PMOD2_3",
+                "type_name": "",
+                "width": 1
+            },
+            {
+                "direction": "out",
+                "is_clock": false,
+                "name": "PMOD2_2",
+                "type_name": "",
+                "width": 1
+            },
+            {
+                "direction": "out",
+                "is_clock": false,
+                "name": "PMOD2_1",
+                "type_name": "",
+                "width": 1
+            },
+            {
+                "direction": "out",
+                "is_clock": false,
+                "name": "PMOD2_0",
+                "type_name": "",
+                "width": 1
+            },
+            {
+                "direction": "out",
+                "is_clock": false,
+                "name": "PMOD1_5",
+                "type_name": "",
+                "width": 1
+            }
+        ]
+    },
+    "version": "unstable"
+}

@@ -1,0 +1,2 @@
+{"bufferSize":10,"hash":1408204116,"signals":[{"name":"c2","width":10},{"name":"c1","width":8},{"name":"c0","width":12}],"toplevel":"himom","triggerNames":["Equals","Greater than","Less than","Always true","Always false"]}
+
