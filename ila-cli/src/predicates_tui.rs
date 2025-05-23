@@ -4,7 +4,8 @@ use std::{
 };
 
 use crate::{
-    communication::{IlaPredicate, PredicateOperation, PredicateTarget, Signal, SignalCluster},
+    predicates::{IlaPredicate, PredicateOperation, PredicateTarget},
+    communication::{Signal, SignalCluster},
     config::{IlaConfig, IlaSignal},
     ui::textinput::TextPromptState,
 };
@@ -110,6 +111,7 @@ impl PredicatePage for GeneralPage {
         let layout = Layout::new(
             ratatui::layout::Direction::Vertical,
             [
+                Constraint::Length(1),
                 Constraint::Length(2),
                 Constraint::Length(1),
                 Constraint::Length(3),
@@ -122,15 +124,19 @@ impl PredicatePage for GeneralPage {
         .split(area);
 
         f.render_widget("General predicate settings".bold(), layout[0]);
+        f.render_widget(match state.target {
+            PredicateTarget::Trigger => "The general predicates page for trigger configuration",
+            PredicateTarget::Capture => "The general predicates page for capture configuration",
+        }, layout[1]);
 
-        f.render_widget("Predicate operation", layout[1]);
+        f.render_widget("Predicate operation", layout[2]);
         state
             .predicate_op_ui_state
-            .render_ref(layout[2], f.buffer_mut());
-        f.render_widget("Predicate Selector", layout[3]);
+            .render_ref(layout[3], f.buffer_mut());
+        f.render_widget("Predicate Selector", layout[4]);
         state
             .predicate_select_ui_state
-            .render_ref(layout[4], f.buffer_mut());
+            .render_ref(layout[5], f.buffer_mut());
     }
 
     fn navigate(&self, state: &mut State, event: &Event) {
@@ -374,6 +380,8 @@ pub struct State<'a> {
     tab: Tab,
     /// The current option selected in the general page
     selected: Selected,
+    /// The predicate target
+    target: PredicateTarget,
     /// The state for the predicate operation
     predicate_op_ui_state: Listbox,
     /// The state for the predicate select
@@ -433,6 +441,7 @@ impl<'a> State<'_> {
         State {
             tab: Tab::General(GeneralPage),
             selected: Selected::Operation,
+            target: predicate.target,
             predicate_op_ui_state: {
                 let mut list = Listbox::new(vec!["AND", "OR"], predicate.operation as usize);
                 list.set_focus(true);
@@ -596,7 +605,7 @@ impl<'a> State<'_> {
                 };
 
                 let predicate = IlaPredicate {
-                    target: PredicateTarget::Trigger,
+                    target: self.target,
                     operation,
                     predicate_select: selected,
                     mask: SignalCluster {

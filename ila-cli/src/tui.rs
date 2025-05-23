@@ -8,7 +8,6 @@ use crossterm::{
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
-use ratatui::style::palette::tailwind::RED;
 use ratatui::style::Stylize;
 use ratatui::text::{Line, Text};
 use ratatui::{
@@ -19,11 +18,13 @@ use ratatui::{
 };
 
 use crate::communication::{
-    perform_register_operation, IlaPredicate, IlaRegisters, RegisterOutput, SignalCluster,
+    perform_register_operation, IlaRegisters, RegisterOutput, SignalCluster,
 };
 use crate::config::IlaConfig;
-use crate::predicates_tui::{Selected as PredSelected, State as PredState};
-use crate::ui::textinput::{TextPrompt, TextPromptState};
+use crate::predicates::IlaPredicate;
+use crate::predicates::PredicateTarget;
+use crate::predicates_tui::State as PredState;
+use crate::ui::textinput::TextPromptState;
 use crate::vcd::write_to_vcd;
 
 /// The keybind text displayed in the TUI
@@ -31,6 +32,7 @@ const KEYBIND_TEXT: &'static str = r#"  CTRL-c ---   Exit
   space  ---   Read samples (if triggered)
   t      ---   Change trigger point
   p      ---   Change trigger predicates
+  c      ---   Change capture predicates
   r      ---   Reset trigger
   v      ---   Write signals to VCD dump
 "#;
@@ -260,11 +262,25 @@ impl<'a> TuiSession<'a> {
                 ));
             }
             (TuiState::Main, KeyCode::Char('p'), _) => {
-                if let Ok(predicate) = IlaPredicate::from_ila(tx_port, self.config) {
+                if let Ok(predicate) =
+                    IlaPredicate::from_ila(tx_port, self.config, PredicateTarget::Trigger)
+                {
                     self.state = TuiState::Predicates(PredState::new(&self.config, predicate));
                 } else {
                     self.log.push(
                         "Unable to retrieve current trigger predicate configuration from the ILA"
+                            .to_string(),
+                    );
+                }
+            }
+            (TuiState::Main, KeyCode::Char('c'), _) => {
+                if let Ok(predicate) =
+                    IlaPredicate::from_ila(tx_port, self.config, PredicateTarget::Capture)
+                {
+                    self.state = TuiState::Predicates(PredState::new(&self.config, predicate));
+                } else {
+                    self.log.push(
+                        "Unable to retrieve current capture predicate configuration from the ILA"
                             .to_string(),
                     );
                 }

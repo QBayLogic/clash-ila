@@ -1,135 +1,13 @@
-use crate::config::{IlaConfig, IlaSignal};
+
+use crate::config::IlaConfig;
+use crate::predicates::PredicateOperation;
 use crate::wishbone::WbTransaction;
 use bitvec::prelude::{BitVec, Msb0};
 use bitvec::slice::BitSlice;
 use bitvec::store::BitStore;
 use bitvec::view::BitView;
-use std::io::{ErrorKind, Read as IoRead, Result as IoResult, Write as IoWrite};
+use std::io::{Read as IoRead, Result as IoResult, Write as IoWrite};
 use std::time::Duration;
-
-/// Different operations for how multiple predicates are combined
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[repr(u32)]
-pub enum PredicateOperation {
-    And = 0,
-    Or = 1,
-}
-
-impl TryFrom<u32> for PredicateOperation {
-    type Error = ();
-
-    fn try_from(value: u32) -> Result<Self, Self::Error> {
-        match value {
-            0 => Ok(PredicateOperation::And),
-            1 => Ok(PredicateOperation::Or),
-            _ => Err(()),
-        }
-    }
-}
-
-/// The places within the ILA where the predicate logic can be applied too
-#[derive(Debug, Clone, PartialEq)]
-pub enum PredicateTarget {
-    Trigger,
-    Capture,
-}
-
-/// The configuration for predicates
-#[derive(Debug, Clone)]
-pub struct IlaPredicate {
-    /// Where in the ILA these predicates will take effect
-    pub target: PredicateTarget,
-    /// How this configuration should combine its predicates
-    pub operation: PredicateOperation,
-    /// Which predicates are active
-    pub predicate_select: u32,
-    /// Filter out bits before comparison
-    pub mask: SignalCluster,
-    /// The comparison value
-    pub compare: SignalCluster,
-}
-
-impl IlaPredicate {
-    /// Creates an up-to-date `IlaPredicate` by grabbing the necessary information from the ILA
-    pub fn from_ila<T>(medium: &mut T, ila: &IlaConfig) -> IoResult<IlaPredicate>
-    where
-        T: IoWrite + IoRead,
-    {
-        let sample_word_width = ila.transaction_bit_count().div_ceil(32);
-
-        let RegisterOutput::TriggerOp(operation) =
-            perform_register_operation(medium, ila, &IlaRegisters::TriggerOp(ReadWrite::Read(())))?
-        else {
-            return Err(ErrorKind::InvalidData.into());
-        };
-        let RegisterOutput::TriggerSelect(selected) = perform_register_operation(
-            medium,
-            ila,
-            &IlaRegisters::TriggerSelect(ReadWrite::Read(())),
-        )?
-        else {
-            return Err(ErrorKind::InvalidData.into());
-        };
-        let RegisterOutput::Mask(mask) = perform_register_operation(
-            medium,
-            ila,
-            &IlaRegisters::Mask(ReadWrite::Read(sample_word_width as u32)),
-        )?
-        else {
-            return Err(ErrorKind::InvalidData.into());
-        };
-        let RegisterOutput::Compare(compare) = perform_register_operation(
-            medium,
-            ila,
-            &IlaRegisters::Compare(ReadWrite::Read(sample_word_width as u32)),
-        )?
-        else {
-            return Err(ErrorKind::InvalidData.into());
-        };
-
-        Ok(IlaPredicate {
-            target: PredicateTarget::Trigger,
-            operation,
-            predicate_select: selected,
-            mask,
-            compare,
-        })
-    }
-
-    /// Attempts to bring the ILA up to date with the current configuration for the ILA predicate
-    pub fn update_ila<T>(&self, medium: &mut T, ila: &IlaConfig) -> IoResult<()>
-    where
-        T: IoWrite + IoRead,
-    {
-        perform_register_operation(
-            medium,
-            ila,
-            &IlaRegisters::TriggerSelect(ReadWrite::Write(self.predicate_select)),
-        )
-        .and(perform_register_operation(
-            medium,
-            ila,
-            &IlaRegisters::TriggerOp(ReadWrite::Write(self.operation)),
-        ))
-        .and(perform_register_operation(
-            medium,
-            ila,
-            &IlaRegisters::Mask(ReadWrite::Write(self.mask.to_data())),
-        ))
-        .and(perform_register_operation(
-            medium,
-            ila,
-            &IlaRegisters::Compare(ReadWrite::Write(self.compare.to_data())),
-        ))
-        .and(perform_register_operation(
-            medium,
-            ila,
-            &IlaRegisters::TriggerReset,
-        ))
-        // We don't care for the output, just about if it errors or not, so we map it to ()
-        .map(|_| ())
-    }
-}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ReadWrite<R, W> {
@@ -146,49 +24,6 @@ pub struct Signal {
     pub name: String,
     pub width: usize,
     pub samples: Vec<BitVec<u8, Msb0>>,
-}
-
-/// Interpret a raw stream of words as signals
-///
-/// The output is a vector of combined samples, to retrieve the individual signals of each combined
-/// sample, use `get_individual_signals()`
-///
-/// * `input` - The raw stream of words
-/// * `transaction_bit_count` - The bit width of an individual signal
-pub fn interpret_as_signal_stream(
-    input: &[u32],
-    transaction_bit_count: usize,
-) -> Vec<BitVec<u8, Msb0>> {
-    let word_count = transaction_bit_count.div_ceil(32) as u32;
-    input
-        .chunks(word_count as usize)
-        .map(|chunk| {
-            chunk
-                .view_bits::<Msb0>()
-                .iter()
-                .skip(chunk.len() * 32 - transaction_bit_count)
-                .collect()
-        })
-        .collect()
-}
-
-/// From a combined sample, split out each individual signal
-///
-/// * `combined` - The sample containing the signals within it, without any padding or alignment
-/// * `signals` - The reference signals
-pub fn get_individual_signals(
-    combined: &BitVec<u8, Msb0>,
-    signals: &[IlaSignal],
-) -> Vec<BitVec<u8, Msb0>> {
-    signals
-        .iter()
-        .rev()
-        .fold((vec![], 0), |(mut seperated, index), signal| {
-            let slice = combined[index..index + signal.width].to_bitvec();
-            seperated.push(slice);
-            (seperated, index + signal.width)
-        })
-        .0
 }
 
 /// A packet of several signals which all got sent at once
@@ -298,18 +133,26 @@ pub enum IlaRegisters {
     /// Register controlling how many samples it should store after triggering
     TriggerPoint(u32),
     /// The value to mask the samples against before triggering
-    Mask(ReadWrite<u32, Vec<u8>>),
+    TriggerMask(ReadWrite<u32, Vec<u8>>),
     /// The value used by the trigger to compare samples against, if it is set to do so
-    Compare(ReadWrite<u32, Vec<u8>>),
+    TriggerCompare(ReadWrite<u32, Vec<u8>>),
+    /// How the trigger should handle mutliple predicates
+    TriggerOp(ReadWrite<(), PredicateOperation>),
+    /// Which predicates are active for the trigger
+    TriggerSelect(ReadWrite<(), u32>),
     /// Read out samples from the ILA buffer, each vector item is an index within the buffer
     Buffer(Vec<u32>),
     /// Read the hash of the ILA, can be used to check if the current instantiated ILA is
     /// out-of-date
     Hash(u32),
-    /// How the trigger should handle mutliple predicates
-    TriggerOp(ReadWrite<(), PredicateOperation>),
-    /// Which predicates are active for the trigger
-    TriggerSelect(ReadWrite<(), u32>),
+    /// The value to mask samples before being fed to the capture predicates
+    CaptureMask(ReadWrite<u32, Vec<u8>>),
+    /// The value used by the capture predicates to compare samples against, if it is set to do so
+    CaptureCompare(ReadWrite<u32, Vec<u8>>),
+    /// How the capture should handle mutliple predicates
+    CaptureOp(ReadWrite<(), PredicateOperation>),
+    /// Which predicates are active for the capture
+    CaptureSelect(ReadWrite<(), u32>),
 }
 
 /// Output of the register whenever a read operation is performed on the ILA.
@@ -317,11 +160,15 @@ pub enum RegisterOutput {
     None,
     TriggerState(bool),
     BufferContent(SignalCluster),
-    Mask(SignalCluster),
-    Compare(SignalCluster),
+    TriggerMask(SignalCluster),
+    TriggerCompare(SignalCluster),
     TriggerOp(PredicateOperation),
     TriggerSelect(u32),
     Hash(bool),
+    CaptureMask(SignalCluster),
+    CaptureCompare(SignalCluster),
+    CaptureOp(PredicateOperation),
+    CaptureSelect(u32),
 }
 
 impl IlaRegisters {
@@ -332,12 +179,18 @@ impl IlaRegisters {
             IlaRegisters::TriggerState => (0x0000_0000, [false, false, true, false]),
             IlaRegisters::TriggerReset => (0x0000_0000, [false, false, true, false]),
             IlaRegisters::TriggerPoint(_) => (0x0000_0001, [true; 4]),
-            IlaRegisters::Hash(_) => (0x0000_0002, [true; 4]),
-            IlaRegisters::Mask(_) => (0x1000_0000, [true; 4]),
-            IlaRegisters::Compare(_) => (0x1100_0000, [true; 4]),
             IlaRegisters::Buffer(_) => (0x3000_0000, [true; 4]),
+            IlaRegisters::Hash(_) => (0x0000_0002, [true; 4]),
+
+            IlaRegisters::TriggerMask(_) => (0x1000_0000, [true; 4]),
+            IlaRegisters::TriggerCompare(_) => (0x1100_0000, [true; 4]),
             IlaRegisters::TriggerOp(_) => (0x0000_0003, [false, false, false, true]),
             IlaRegisters::TriggerSelect(_) => (0x0000_0004, [true; 4]),
+
+            IlaRegisters::CaptureMask(_) => (0x2000_0000, [true; 4]),
+            IlaRegisters::CaptureCompare(_) => (0x2100_0000, [true; 4]),
+            IlaRegisters::CaptureOp(_) => (0x0000_0005, [false, false, false, true]),
+            IlaRegisters::CaptureSelect(_) => (0x0000_0006, [true; 4]),
         }
     }
 
@@ -346,27 +199,24 @@ impl IlaRegisters {
     pub fn translate_output(&self, ila: &IlaConfig, output: &[u32]) -> RegisterOutput {
         match self {
             IlaRegisters::Capture(_) => RegisterOutput::None,
+            IlaRegisters::Buffer(_) => {
+                RegisterOutput::BufferContent(SignalCluster::from_data(ila, output))
+            }
             IlaRegisters::TriggerState => RegisterOutput::TriggerState(match output.get(0) {
                 Some(1) => true,
                 _ => false,
             }),
             IlaRegisters::TriggerReset => RegisterOutput::None,
             IlaRegisters::TriggerPoint(_) => RegisterOutput::None,
-            IlaRegisters::Mask(ReadWrite::Read(_)) => {
-                RegisterOutput::Mask(SignalCluster::from_data(ila, output))
+
+            IlaRegisters::TriggerMask(ReadWrite::Read(_)) => {
+                RegisterOutput::TriggerMask(SignalCluster::from_data(ila, output))
             }
-            IlaRegisters::Mask(ReadWrite::Write(_)) => RegisterOutput::None,
-            IlaRegisters::Compare(ReadWrite::Read(_)) => {
-                RegisterOutput::Compare(SignalCluster::from_data(ila, output))
+            IlaRegisters::TriggerMask(ReadWrite::Write(_)) => RegisterOutput::None,
+            IlaRegisters::TriggerCompare(ReadWrite::Read(_)) => {
+                RegisterOutput::TriggerCompare(SignalCluster::from_data(ila, output))
             }
-            IlaRegisters::Compare(ReadWrite::Write(_)) => RegisterOutput::None,
-            IlaRegisters::Buffer(_) => {
-                RegisterOutput::BufferContent(SignalCluster::from_data(ila, output))
-            }
-            IlaRegisters::Hash(compare) => {
-                let hash_matches = output.first().map(|hash| hash == compare).unwrap_or(false);
-                RegisterOutput::Hash(hash_matches)
-            }
+            IlaRegisters::TriggerCompare(ReadWrite::Write(_)) => RegisterOutput::None,
             IlaRegisters::TriggerOp(ReadWrite::Read(_)) => match output.get(0) {
                 Some(n) => PredicateOperation::try_from(*n)
                     .map_or_else(|_| RegisterOutput::None, |op| RegisterOutput::TriggerOp(op)),
@@ -378,6 +228,31 @@ impl IlaRegisters {
                 None => RegisterOutput::None,
             },
             IlaRegisters::TriggerSelect(ReadWrite::Write(_)) => RegisterOutput::None,
+
+            IlaRegisters::Hash(compare) => {
+                let hash_matches = output.first().map(|hash| hash == compare).unwrap_or(false);
+                RegisterOutput::Hash(hash_matches)
+            }
+
+            IlaRegisters::CaptureMask(ReadWrite::Read(_)) => {
+                RegisterOutput::CaptureMask(SignalCluster::from_data(ila, output))
+            }
+            IlaRegisters::CaptureMask(ReadWrite::Write(_)) => RegisterOutput::None,
+            IlaRegisters::CaptureCompare(ReadWrite::Read(_)) => {
+                RegisterOutput::CaptureCompare(SignalCluster::from_data(ila, output))
+            }
+            IlaRegisters::CaptureCompare(ReadWrite::Write(_)) => RegisterOutput::None,
+            IlaRegisters::CaptureOp(ReadWrite::Read(_)) => match output.get(0) {
+                Some(n) => PredicateOperation::try_from(*n)
+                    .map_or_else(|_| RegisterOutput::None, |op| RegisterOutput::CaptureOp(op)),
+                None => RegisterOutput::None,
+            },
+            IlaRegisters::CaptureOp(ReadWrite::Write(_)) => RegisterOutput::None,
+            IlaRegisters::CaptureSelect(ReadWrite::Read(_)) => match output.get(0) {
+                Some(n) => RegisterOutput::CaptureSelect(*n),
+                None => RegisterOutput::None,
+            },
+            IlaRegisters::CaptureSelect(ReadWrite::Write(_)) => RegisterOutput::None,
         }
     }
 
@@ -394,7 +269,7 @@ impl IlaRegisters {
             IlaRegisters::TriggerPoint(trig_point) => {
                 WbTransaction::new_writes(byte_select, addr, vec![*trig_point])
             }
-            IlaRegisters::Mask(ReadWrite::Write(items)) => {
+            IlaRegisters::TriggerMask(ReadWrite::Write(items)) => {
                 let words: Vec<u32> = items
                     .chunks(4)
                     .map(|chunk| {
@@ -405,10 +280,10 @@ impl IlaRegisters {
                     .collect();
                 WbTransaction::new_writes(byte_select, addr, words)
             }
-            IlaRegisters::Mask(ReadWrite::Read(length)) => {
+            IlaRegisters::TriggerMask(ReadWrite::Read(length)) => {
                 WbTransaction::new_reads(byte_select, addr, (0..*length).collect())
             }
-            IlaRegisters::Compare(ReadWrite::Write(items)) => {
+            IlaRegisters::TriggerCompare(ReadWrite::Write(items)) => {
                 let words: Vec<u32> = items
                     .chunks(4)
                     .map(|chunk| {
@@ -419,18 +294,9 @@ impl IlaRegisters {
                     .collect();
                 WbTransaction::new_writes(byte_select, addr, words)
             }
-            IlaRegisters::Compare(ReadWrite::Read(length)) => {
+            IlaRegisters::TriggerCompare(ReadWrite::Read(length)) => {
                 WbTransaction::new_reads(byte_select, addr, (0..*length).collect())
             }
-            IlaRegisters::Buffer(logical_indices) => {
-                let words_per_index = ila.transaction_bit_count().div_ceil(32) as u32;
-                let buffer_indices = logical_indices
-                    .iter()
-                    .flat_map(|index| (*index..*index + words_per_index).collect::<Vec<u32>>())
-                    .collect();
-                WbTransaction::new_reads(byte_select, addr, buffer_indices)
-            }
-            IlaRegisters::Hash(_) => WbTransaction::new_reads(byte_select, addr, vec![0]),
             IlaRegisters::TriggerOp(ReadWrite::Write(op)) => {
                 WbTransaction::new_writes(byte_select, addr, vec![*op as u32])
             }
@@ -441,6 +307,55 @@ impl IlaRegisters {
                 WbTransaction::new_writes(byte_select, addr, vec![*selection])
             }
             IlaRegisters::TriggerSelect(ReadWrite::Read(_)) => {
+                WbTransaction::new_reads(byte_select, addr, vec![0])
+            }
+            IlaRegisters::Buffer(logical_indices) => {
+                let words_per_index = ila.transaction_bit_count().div_ceil(32) as u32;
+                let buffer_indices = logical_indices
+                    .iter()
+                    .flat_map(|index| (*index..*index + words_per_index).collect::<Vec<u32>>())
+                    .collect();
+                WbTransaction::new_reads(byte_select, addr, buffer_indices)
+            }
+            IlaRegisters::Hash(_) => WbTransaction::new_reads(byte_select, addr, vec![0]),
+            IlaRegisters::CaptureMask(ReadWrite::Write(items)) => {
+                let words: Vec<u32> = items
+                    .chunks(4)
+                    .map(|chunk| {
+                        chunk
+                            .iter()
+                            .fold(0, |acc, byte| (acc << 8) | (*byte as u32))
+                    })
+                    .collect();
+                WbTransaction::new_writes(byte_select, addr, words)
+            }
+            IlaRegisters::CaptureMask(ReadWrite::Read(length)) => {
+                WbTransaction::new_reads(byte_select, addr, (0..*length).collect())
+            }
+            IlaRegisters::CaptureCompare(ReadWrite::Write(items)) => {
+                let words: Vec<u32> = items
+                    .chunks(4)
+                    .map(|chunk| {
+                        chunk
+                            .iter()
+                            .fold(0, |acc, byte| (acc << 8) | (*byte as u32))
+                    })
+                    .collect();
+                WbTransaction::new_writes(byte_select, addr, words)
+            }
+            IlaRegisters::CaptureCompare(ReadWrite::Read(length)) => {
+                WbTransaction::new_reads(byte_select, addr, (0..*length).collect())
+            }
+            IlaRegisters::CaptureOp(ReadWrite::Write(op)) => {
+                WbTransaction::new_writes(byte_select, addr, vec![*op as u32])
+            }
+            IlaRegisters::CaptureOp(ReadWrite::Read(_)) => {
+                WbTransaction::new_reads(byte_select, addr, vec![0])
+            }
+            IlaRegisters::CaptureSelect(ReadWrite::Write(selection)) => {
+                WbTransaction::new_writes(byte_select, addr, vec![*selection])
+            }
+            IlaRegisters::CaptureSelect(ReadWrite::Read(_)) => {
                 WbTransaction::new_reads(byte_select, addr, vec![0])
             }
         }

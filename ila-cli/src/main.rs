@@ -11,6 +11,7 @@ mod config;
 mod tui;
 mod vcd;
 mod wishbone;
+mod predicates;
 mod predicates_tui;
 mod ui;
 
