@@ -67,12 +67,22 @@ It applies the mask over the incoming sample and `>` it with the compare value
 ilaPredicateGt :: (BitPack a) => Predicate a
 ilaPredicateGt s c m = ((pack s) .&. m) > c
 
+-- | Default ILA predicate, ignores all arguments and always returns `True`
+ilaPredicateTrue :: (BitPack a) => Predicate a
+ilaPredicateTrue _ _ _ = True
+
+-- | Default ILA predicate, ignores all arguments and always returns `False`
+ilaPredicateFalse :: (BitPack a) => Predicate a
+ilaPredicateFalse _ _ _ = False
+
 -- | Predefined list of three ILA predicates. The operators it covers are: `==`, `>`, `<`
-ilaDefaultPredicates :: (BitPack a) => Vec 3 (NamedPredicate a)
+ilaDefaultPredicates :: (BitPack a) => Vec 5 (NamedPredicate a)
 ilaDefaultPredicates =
   ( (ilaPredicateEq, "Equals")
       :> (ilaPredicateGt, "Greater than")
       :> (ilaPredicateLt, "Less than")
+      :> (ilaPredicateTrue, "Always true")
+      :> (ilaPredicateFalse, "Always false")
       :> Nil
   )
 
