@@ -45,6 +45,7 @@ impl WbTransaction {
 
     /// Converts a Wishbone transaction into `EBRecord`s, those records can then be framed by an
     /// EBHeader and be sent over any medium with etherbone.
+    #[allow(clippy::wrong_self_convention)]
     pub fn to_records(mut self) -> Vec<EBRecord> {
         const ETHERBONE_MAX_ENTRIES: usize = 255;
 
@@ -59,7 +60,7 @@ impl WbTransaction {
                 .split_at_checked(ETHERBONE_MAX_ENTRIES)
                 .unwrap_or((&self.writes, &[]));
 
-            if rd_this.len() == 0 && wr_this.len() == 0 {
+            if rd_this.is_empty() && wr_this.is_empty() {
                 break out;
             }
 
@@ -101,7 +102,7 @@ impl EBRecord {
         .concat();
 
         let mut packet = vec![eb_header, record_header];
-        if self.writes.len() > 0 {
+        if !self.writes.is_empty() {
             packet.push(self.write_addr.to_be_bytes().to_vec());
             packet.push(
                 self.writes
@@ -110,7 +111,7 @@ impl EBRecord {
                     .collect(),
             );
         }
-        if self.reads.len() > 0 {
+        if !self.reads.is_empty() {
             // Unlike in writes, in reads this field is *where* we need to return the data from
             // However, we don't care about that, so we set it to zero
             packet.push(0_u32.to_be_bytes().to_vec());

@@ -32,12 +32,14 @@ impl IlaConfig {
 
     /// How many bytes does it take to get one sample of all signals?
     #[inline]
+    #[allow(unused)]
     pub fn transaction_byte_count(&self) -> usize {
         self.transaction_bit_count().div_ceil(8)
     }
     
     /// How many bytes do we expect a datapacket to contain?
     #[inline]
+    #[allow(unused)]
     pub fn expected_byte_count(&self) -> usize {
         self.buffer_size * self.transaction_byte_count()
     }

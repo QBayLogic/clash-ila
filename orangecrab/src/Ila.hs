@@ -373,7 +373,7 @@ ilaWb (IlaConfig @_ @a @depth @m depth initTriggerPoint ilaHash tracing triggers
       unbundle
         $ moore
           ( \(oldMM, _) (wb, currentSample, capture) ->
-              if inWbCycle' wb && wb.writeEnable
+              if wb.strobe && wb.busCycle && wb.writeEnable
                 then
                   writeIlaMM wb.addr wb.busSelect wb.writeData
                     $ updateRM (doesTrigger oldMM currentSample) capture oldMM
@@ -436,7 +436,9 @@ ilaWb (IlaConfig @_ @a @depth @m depth initTriggerPoint ilaHash tracing triggers
         }
 
     -- \| The first clock cycle shouldn't ack according to wishbone
-    delayedAck = inWbCycle fwdM2S .&&. (register False $ inWbCycle fwdM2S)
+    delayedAck = inWbCycle <$> fwdM2S .&&. (register False $ inWbCycle <$> fwdM2S)
+     where
+      inWbCycle fwd = fwd.strobe && fwd.busCycle
 
     -- Writes are done in one clock cycle, but wishbone timing requires us to delay it by one clock cycle
     out =

@@ -23,14 +23,16 @@ import Control.Lens (view)
 import Control.Monad.State (State)
 import Data.String.Interpolate (__i)
 import GHC.Stack (HasCallStack)
-import Prettyprinter (Doc)
+import Prettyprinter (Doc, pretty)
 
-import Data.Aeson (ToJSON, encode)
+import Data.Aeson (ToJSON)
+import Data.Aeson.Text (encodeToLazyText)
 import Data.Data (Proxy (Proxy))
 import Data.Either
 import Data.Hashable (Hashable, hash)
 import Data.Monoid (Ap (getAp))
 import Data.Word (Word32)
+import Data.ByteString.Lazy.UTF8 qualified as LUTF8
 
 {- | ILA predicate function
 Used to compare incoming data to a reference value (with a possible mask) and returns if the
@@ -204,22 +206,20 @@ instance
     newInfo = GenSignal{name = newName, width = natToNum @(BitSize b)}
     newBundled = (,) <$> prevSignal <*> newSignal
 
-{- | A polyvariadic function containing 'labeled signals', aka, a list of tuples where the left
-side is an arbitary signal, and the right a string. Terminated by a `WithIlaConfig`. The return
-type of the function is a `IlaConfig` which should be passed along to the ILA itself.
+{- | A polyvariadic function containing 'labelled signals', aka, a list of tuples where the left
+side is an arbitary signal, and the right a string.
 
 # Example:
 
->>> counter = register 0 $ counter + 1 :: Signal dom (Unsigned 8)
->>> indicator = pure True :: Signal dom Bool
->>> config = WithIlaConfig
-      { name = "my design"
-      , triggerPoint = 0
-      , bufferDepth = d100
-      , trigger = (==200) <$> counter
-      , capture = pure True
-      }
->>> ilaConfig (counter, "8 bit value") (indicator, "indicator led light") config
+>>> counter = register 0 $ counter + 1 :: Signal System (Unsigned 8)
+>>> active = pure True :: Signal System Bool
+>>> probe = ilaProbe (counter, "8 bit value") (active, "system active")
+>>> :t probe
+>>> probe
+  :: (LabelledSignals t 2 "System" (Unsigned 8, Bool),
+      Hidden "clock" (Clock System), Hidden "reset" (Reset System),
+      Hidden "enable" (Enable System)) =>
+      t
 -}
 ilaConfig ::
   forall dom a next.
@@ -233,7 +233,11 @@ ilaConfig ::
 ilaConfig (s :: (Signal dom a, String)) =
   ilaProbe (Nil :: Vec 0 GenSignal, pure () :: Signal dom ()) s
 
--- | Write signal information to a file, using blackboxes
+{- | Write metadata of signals to a json file, this metadata includes the width of the signal and a
+given label
+
+The structure of the json file is defined at the `GenIla` record
+-}
 writeSignalInfo ::
   forall n m s.
   -- | Toplevel name
@@ -265,7 +269,10 @@ writeSignalInfo !_toplevel !_bufSize !_sigInfo !_triggerNames = 0
   )
   #-}
 
--- | The write signal blackbox function, grabs the AST from the context it gets invoked in
+{- | The actual blackbox function, this grabs the AST from the callstack, reconstructs the proper
+types from it and creates the blackbox & blackbox meta functions (which in turn write the reconstructed
+types to a file)
+-}
 signalInfoBBF :: (HasCallStack) => BlackBoxFunction
 signalInfoBBF _ _ args _ = view tcCache >>= go
  where
@@ -284,29 +291,27 @@ signalInfoBBF _ _ args _ = view tcCache >>= go
             toplevel
             (SNat @s)
             (getSigInfo sigInfo)
-            (coerceToType triggerNames "cry")
-    | otherwise = errorX "Improper data given, expected Vec n (Int, String)"
+            (coerceTermToType triggerNames)
+    | otherwise =
+        errorX
+          "AST does not match expected, expected AST in the form of String -> SNat -> Vec n (Int, String)"
 
   -- \| Make the actual blackbox
   mkBlackBox input = pure $ Right (blackBoxMeta input, blackBox input)
 
   -- \| Coerce a `Term` back into a type
   -- Panics on failure
-  coerceToType ::
+  coerceTermToType ::
     (TermLiteral a) =>
     -- \| The AST of the type
     Term ->
-    -- \| Error label, to be displayed if coercion fails
-    String ->
     -- \| The result type
     a
-  coerceToType term err = case termToData term of
-    Left _ -> errorX [__i|Cannot coerce term into an #{err}, cannot write ILA config|]
-    Right v -> v
+  coerceTermToType term = either errorX id $ termToDataError term
 
   -- \| Get the signal information from it's AST form
   getSigInfo :: forall n. (KnownNat n) => Term -> Vec n (Int, String)
-  getSigInfo term = coerceToType term "signal info"
+  getSigInfo term = coerceTermToType term
 
   -- \| Generate the ILA from the AST
   getGenIla ::
@@ -322,12 +327,12 @@ signalInfoBBF _ _ args _ = view tcCache >>= go
     GenIla
   getGenIla toplevel bufSize sigInfo triggerNames =
     GenIla
-      { toplevel = coerceToType toplevel "toplevel name"
+      { toplevel = coerceTermToType toplevel
       , bufferSize = snatToNum bufSize
       , hash =
           fromIntegral
             $ hash
-              ( coerceToType toplevel "toplevel name" :: String
+              ( coerceTermToType toplevel :: String
               , snatToInteger bufSize
               , toList sigInfo
               )
@@ -393,7 +398,7 @@ renderJSON ::
   BlackBoxContext ->
   -- | The output JSON content
   State s (Doc ())
-renderJSON ila _ = pure [__i|#{encode ila}|]
+renderJSON ila _ = pure . pretty $ encodeToLazyText ila
 {-# NOINLINE renderJSON #-}
 
 -- All types primarily just used to properly format a JSON document

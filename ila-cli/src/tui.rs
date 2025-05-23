@@ -27,7 +27,7 @@ use crate::ui::textinput::{TextPrompt, TextPromptState};
 use crate::vcd::write_to_vcd;
 
 /// The keybind text displayed in the TUI
-const KEYBIND_TEXT: &'static str = r#"  CTRL-c   ---   Exit
+const KEYBIND_TEXT: &'static str = r#"  CTRL-c ---   Exit
   space  ---   Read samples (if triggered)
   t      ---   Change trigger point
   p      ---   Change trigger predicates
@@ -217,7 +217,7 @@ impl<'a> TuiSession<'a> {
             }
             (TuiState::Main, KeyCode::Char('r'), _) => {
                 if let Err(err) =
-                    perform_register_operation(tx_port, &self.config, &IlaRegisters::TriggerReset)
+                    perform_register_operation(tx_port, self.config, &IlaRegisters::TriggerReset)
                 {
                     self.log.push(format!("Error: {err}"));
                 }
@@ -276,7 +276,7 @@ impl<'a> TuiSession<'a> {
                 ));
             }
             (TuiState::InPrompt(_), KeyCode::Esc, _) => {
-                self.log.push(format!("Cancelled save"));
+                self.log.push("Cancelled save".to_string());
                 self.state = TuiState::Main;
             }
             (TuiState::InPrompt(prompt), KeyCode::Enter, _) => {
@@ -287,20 +287,20 @@ impl<'a> TuiSession<'a> {
                     PromptReason::SaveVcd => {
                         if let Some(sample) = self.captured.last() {
                             if let Err(err) =
-                                write_to_vcd(sample, &self.config, prompt.input.clone())
+                                write_to_vcd(sample, self.config, prompt.input.clone())
                             {
                                 self.log.push(format!("Error when saving VCD: {}", err));
                             } else {
-                                self.log.push(format!("Saved succesfully!"));
+                                self.log.push("Saved succesfully!".to_string());
                             }
                         } else {
-                            self.log.push(format!("Nothing to save"));
+                            self.log.push("Nothing to save".to_string());
                         }
                     }
                     PromptReason::ChangeTrigger => match prompt.input.parse() {
                         Ok(n) if n > self.config.buffer_size as u32 => {
                             self.log
-                                .push(format!("Invalid input; must be specified range"));
+                                .push("Invalid input; must be specified range".to_string());
                         }
                         Ok(n) => {
                             self.log.push(
@@ -315,8 +315,9 @@ impl<'a> TuiSession<'a> {
                             );
                         }
                         Err(_) => {
-                            self.log
-                                .push(format!("Invalid input; must be a unsigned 32 bit number"));
+                            self.log.push(
+                                "Invalid input; must be a unsigned 32 bit number".to_string(),
+                            );
                         }
                     },
                 }

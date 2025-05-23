@@ -7,24 +7,6 @@ module WishboneUtils where
 import Clash.Prelude
 import Protocols.Wishbone
 
--- | Checks if the current `WishboneM2S` is in a wishbone cycle
-inWbCycle' ::
-  forall addrW selW dat.
-  -- | The wishbone instance
-  WishboneM2S addrW selW dat ->
-  -- | Wether or not we're in a wishbone cycle
-  Bool
-inWbCycle' wb = wb.strobe && wb.busCycle
-
--- | Checks if the current `WishboneM2S` is in a wishbone cycle
-inWbCycle ::
-  forall dom addrW selW dat.
-  -- | The M2S signal
-  Signal dom (WishboneM2S addrW selW dat) ->
-  -- | Wether or not we're in a wishbone cycle
-  Signal dom Bool
-inWbCycle m2s = inWbCycle' <$> m2s
-
 {- | Check if the current wishbone cycle has a specific address and byte select
 
 NOTE: only returns true in a valid WB cycle!
@@ -43,8 +25,7 @@ compareAddr ::
   -- | Output indicating if the current cycle matches the signal
   Signal dom Bool
 compareAddr addr byteSel m2s =
-  inWbCycle m2s
-    .&&. (\fwd -> fwd.addr == addr && fwd.busSelect == byteSel)
+  (\fwd -> fwd.busCycle && fwd.strobe && fwd.addr == addr && fwd.busSelect == byteSel)
     <$> m2s
 
 {- | Check if the current wishbone cycle falls within a specific address range. Ignoring byte select
@@ -65,8 +46,7 @@ compareAddrRange ::
   -- | Output indicating if the current cycle falls within the address range
   Signal dom Bool
 compareAddrRange minAddr maxAddr m2s =
-  inWbCycle m2s
-    .&&. (\fwd -> fwd.addr >= minAddr && fwd.addr <= maxAddr)
+  (\fwd -> fwd.busCycle && fwd.strobe && fwd.addr >= minAddr && fwd.addr <= maxAddr)
     <$> m2s
 
 {- | A mux but switching based on address

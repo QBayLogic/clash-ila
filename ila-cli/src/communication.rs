@@ -195,6 +195,7 @@ pub fn get_individual_signals(
 ///
 /// This should be considered as 'all signals being monitored by the ILA in one timeframe'
 #[derive(Debug, Clone)]
+#[allow(unused)]
 pub struct SignalCluster {
     pub cluster: Vec<Signal>,
     pub timestamp: Duration,
@@ -286,6 +287,7 @@ impl SignalCluster {
 /// An enum for operating on different registers on the ILA, without having to know the explicit
 /// address.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[allow(unused)]
 pub enum IlaRegisters {
     /// Register controlling wether or not to capture samples
     Capture(bool),
@@ -341,7 +343,7 @@ impl IlaRegisters {
 
     /// 'Translates' the raw word output into something useful, given the register of which the
     /// read was attempted from
-    pub fn translate_output(&self, ila: &IlaConfig, output: &Vec<u32>) -> RegisterOutput {
+    pub fn translate_output(&self, ila: &IlaConfig, output: &[u32]) -> RegisterOutput {
         match self {
             IlaRegisters::Capture(_) => RegisterOutput::None,
             IlaRegisters::TriggerState => RegisterOutput::TriggerState(match output.get(0) {
@@ -362,7 +364,7 @@ impl IlaRegisters {
                 RegisterOutput::BufferContent(SignalCluster::from_data(ila, output))
             }
             IlaRegisters::Hash(compare) => {
-                let hash_matches = output.get(0).map(|hash| hash == compare).unwrap_or(false);
+                let hash_matches = output.first().map(|hash| hash == compare).unwrap_or(false);
                 RegisterOutput::Hash(hash_matches)
             }
             IlaRegisters::TriggerOp(ReadWrite::Read(_)) => match output.get(0) {
@@ -424,8 +426,7 @@ impl IlaRegisters {
                 let words_per_index = ila.transaction_bit_count().div_ceil(32) as u32;
                 let buffer_indices = logical_indices
                     .iter()
-                    .map(|index| (*index..*index + words_per_index).collect::<Vec<u32>>())
-                    .flatten()
+                    .flat_map(|index| (*index..*index + words_per_index).collect::<Vec<u32>>())
                     .collect();
                 WbTransaction::new_reads(byte_select, addr, buffer_indices)
             }

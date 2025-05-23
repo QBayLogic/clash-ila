@@ -11,8 +11,8 @@ import Protocols
 import Protocols.Df qualified as Df
 import Protocols.PacketStream
 
-import Debug.Trace
 import Data.String.Interpolate (__i)
+import Debug.Trace
 
 {- | Send out `Df` data through UART
 
@@ -114,115 +114,47 @@ ps2df = Circuit exposeIn <| downConverterC @1
       , toDf <$> incoming
       )
 
-{- | Converts a `Df` into a `PacketStream`. The packet stream will be transactions of individual
-bytes, if you want it to bundle multiple bytes together, use `upConverterC`
--}
-df2ps ::
-  forall dom.
-  (HiddenClockResetEnable dom) =>
-  Circuit
-    (Df dom (BitVector 8))
-    (PacketStream dom 1 ())
-df2ps = Circuit exposeIn
- where
-  exposeIn (incoming, backpressure) = out
-   where
-    ps2ack :: PacketStreamS2M -> Ack
-    ps2ack = Ack . _ready
-
-    toPs :: Df.Data (BitVector 8) -> Maybe (PacketStreamM2S 1 ())
-    toPs Df.NoData = Nothing
-    toPs (Df.Data byte) =
-      Just $
-        PacketStreamM2S
-          { _meta = ()
-          , _last = Just 1
-          , _abort = False
-          , _data = byte :> Nil
-          }
-
-    out =
-      ( ps2ack <$> backpressure
-      , toPs <$> incoming
-      )
-
-{- | Searches for a statically known 'preamble'
-It returns the same stream of bytes as came in, but with a flag indicating if a preamble has
-been found. Only the last element of the preamble will have the flag set true.
-
-Example:
-
->>> let wcre = withClockResetEnable systemClockGen systemResetGen enableGen
->>> let input = [NoData, NoData, Data 1, NoData, Data 1, Data 2, Data 3, NoData, NoData, Data 5]
->>> take 11 $ simulateC (wcre (findPreamble (1 :> 2 :> 3 :> Nil))) def { resetCycles = 1 } input
-[NoData,NoData,NoData,Data (1,False),NoData,Data (1,False),Data (2,False),Data (3,True),NoData,NoData]
--}
-findPreamble ::
-  forall dom n a.
-  ( HiddenClockResetEnable dom
-  , KnownNat n
-  , Eq a
-  ) =>
-  -- | The preamble to search for
-  Vec n a ->
-  -- | The circuit to slot in
-  Circuit
-    (Df dom a)
-    (Df dom (a, Bool))
-findPreamble preamble = Circuit exposeIn
- where
-  exposeIn (fwd, bwd) = out
-   where
-    transfer :: Index n -> Df.Data a -> (Index n, Df.Data (a, Bool))
-    transfer _ Df.NoData = (0, Df.NoData)
-    transfer i (Df.Data a)
-      | i == maxBound && a == preamble !! i = (0, Df.Data (a, True))
-      | a == preamble !! i = (i + 1, Df.Data (a, False))
-      | otherwise = (0, Df.Data (a, False))
-
-    out = (bwd, mealy transfer 0 fwd)
-
--- | The current parsing state of `etherboneDfPacketizer`
+-- | Represents state of `etherboneDfPacketizer`
 data DepacketizeDfState
-  = EBNone
-  -- ^ Currently not parsing / searching for the magic
-  | EBHeader (Index 1)
-  -- ^ Parsing the EBHeader
-
-  -- | EBPadding (Index 1)
-  | EBRecord (Index 2)
-  -- ^ Parse the header of an EBRecord, this is the field containing how many read/writes there are
-  | EBBody (Index 514, Index 2)
-  -- ^ The value for wCound and rCount are 8 bit, meaning there are at most 256 entries (for each).
-  -- There's also the base address fields, so that makes the total 256 * 2 + 2 = 514
-  --
-  -- The second index is for 32 and 64 bit mode, where the entry may take up multiple 16 bit words
-  -- In our case, we only support 32 bit etherbone, so it's always `Index 2`
+  = -- | Currently not parsing / searching for the magic
+    EBMagic
+  | -- | Parsing the EBHeader
+    EBHeader (Index 1)
+  | -- | EBPadding (Index 1)
+    EBRecord
+      -- | Parse the header of an EBRecord, this is the field containing how many read/writes there are
+      (Index 2)
+  | -- | The value for wCound and rCount are 8 bit, meaning there are at most 256 entries (for each).
+    -- There's also the base address fields, so that makes the total 256 * 2 + 2 = 514
+    --
+    -- The second index is for 32 and 64 bit mode, where the entry may take up multiple 16 bit words
+    -- In our case, we only support 32 bit etherbone, so it's always `Index 2`
+    EBBody (Index 514, Index 2)
   deriving (Generic, NFDataX, Show)
 
--- | On a Df input, packetize the data such that it can be fed into `etherboneC` without trouble.
---
--- The problem this function intends to solve is that for certain kinds of mediums, the complete
--- packet length isn't known ahead of time. Making the construction of the `PacketStream` difficult.
---
--- This function allows one to have a stream of bytes and it will attempt to format it into a
--- `PacketStream`, so it can be fed to `etherboneC`. 
---
--- # Limitations
---
--- For now, this function __ONLY__ supports 32 bit etherbone packets. 64 bit etherbone packets will
--- get treated as 32 bit, which __WILL__ cause you problems if you try it. So don't :)
---
--- Another limitation is that due to the nature of etherbone, it is impossible for us to determine
--- how many EBRecords there are. This function assumes each etherbone packet only contains
--- __one__ EBRecord.
+{- | On a Df input, packetize the data such that it can be fed into `etherboneC` without trouble.
+
+The problem this function intends to solve is that for certain kinds of mediums, the complete
+packet length isn't known ahead of time. Making the construction of the `PacketStream` difficult.
+
+This function allows one to have a stream of bytes and it will attempt to format it into a
+`PacketStream`, so it can be fed to `etherboneC`.
+
+# Limitations
+
+For now, this function __ONLY__ supports 32 bit etherbone packets. 64 bit etherbone packets will
+get treated as 32 bit, which __WILL__ cause you problems if you try it. So don't :)
+
+Another limitation is that due to the nature of etherbone, it is impossible for us to determine
+how many EBRecords there are. This function assumes each etherbone packet only contains
+__one__ EBRecord.
+-}
 etherboneDfPacketizer ::
   forall dom.
   (HiddenClockResetEnable dom) =>
   Circuit
     (Df dom (BitVector 8))
     (PacketStream dom 4 ())
--- etherboneDfPacketizer = upConverterC @2 @2 <| Circuit exposeIn <| Df.compressor Nothing toWord
 etherboneDfPacketizer = upConverterC @2 @2 <| Circuit exposeIn <| Df.compressor Nothing toWord <| Df.fifo d32
  where
   toWord ::
@@ -232,7 +164,7 @@ etherboneDfPacketizer = upConverterC @2 @2 <| Circuit exposeIn <| Df.compressor 
 
   exposeIn (fwd, bwd) = out
    where
-    -- | Parse WCount and RCount fields in an EBRecord and return how long the expected packet is
+    -- \| Parse WCount and RCount fields in an EBRecord and return how long the expected packet is
     --
     -- We *2 is done due to us assuming we're using 32 bit etherbone, so each address/value is
     -- 32 bits. Each field is 16 bits.
@@ -244,7 +176,7 @@ etherboneDfPacketizer = upConverterC @2 @2 <| Circuit exposeIn <| Df.compressor 
       (wCount :> rCount :> Nil) -> (unpack $ resize rCount) + (unpack $ resize wCount) + 1
       _ -> 0 -- Haskell is stupid
 
-    -- | Create the PS packet without `_last`
+    -- \| Create the PS packet without `_last`
     partialPs word =
       Just $
         PacketStreamM2S
@@ -253,7 +185,7 @@ etherboneDfPacketizer = upConverterC @2 @2 <| Circuit exposeIn <| Df.compressor 
           , _meta = ()
           , _data = word
           }
-    -- | Create the PS packet with `_last`
+    -- \| Create the PS packet with `_last`
     completePS word =
       Just $
         PacketStreamM2S
@@ -267,21 +199,17 @@ etherboneDfPacketizer = upConverterC @2 @2 <| Circuit exposeIn <| Df.compressor 
       DepacketizeDfState ->
       Df.Data (Vec 2 (BitVector 8)) ->
       (DepacketizeDfState, Maybe (PacketStreamM2S 2 ()))
-    transfer' EBNone (Df.Data word@(0x4e :> 0x6f :> Nil)) = (EBHeader maxBound, partialPs word)
-    transfer' EBNone _ = (EBNone, Nothing) -- Silently drop packets if they're not part of etherbone
+    transfer' EBMagic (Df.Data word@(0x4e :> 0x6f :> Nil)) = (EBHeader maxBound, partialPs word)
+    transfer' EBMagic _ = (EBMagic, Nothing) -- Silently drop packets if they're not part of etherbone
     transfer' (EBHeader n) (Df.Data word)
       | n == 0 = (EBRecord maxBound, partialPs word)
       | otherwise = (EBHeader (n - 1), partialPs word)
-    -- transfer (EBPadding n) (Df.Data word)
-    --   | n == 0 = (EBRecord maxBound, partialPs word)
-    --   | otherwise = (EBPadding (n - 1), partialPs word)
     transfer' (EBRecord n) (Df.Data word)
-      | n == 0 && getLength word == 0 = (EBNone, completePS word)
-      -- | n == 0 = (EBBody $ (trace [__i|len #{getLength word}|] $ getLength word), partialPs word)
+      | n == 0 && getLength word == 0 = (EBMagic, completePS word)
       | n == 0 = (EBBody (getLength word, maxBound), partialPs word)
       | otherwise = (EBRecord (n - 1), partialPs word)
     transfer' (EBBody (n, w)) (Df.Data word)
-      | n == 0 && w == 0 = (EBNone, completePS word)
+      | n == 0 && w == 0 = (EBMagic, completePS word)
       | w == 0 = (EBBody (n - 1, maxBound), partialPs word)
       | otherwise = (EBBody (n, w - 1), partialPs word)
     -- When we receive no data, keep the current state
@@ -292,12 +220,12 @@ etherboneDfPacketizer = upConverterC @2 @2 <| Circuit exposeIn <| Df.compressor 
       (PacketStreamS2M, Df.Data (Vec 2 (BitVector 8))) ->
       (DepacketizeDfState, Maybe (PacketStreamM2S 2 ()))
     transfer state (bwdData, fwdData)
-      -- | _ready bwdData = trace [__i|#{state} with #{fwdData} -> #{transfer' state fwdData}|] $ transfer' state fwdData
+      -- \| _ready bwdData = trace [__i|#{state} with #{fwdData} -> #{transfer' state fwdData}|] $ transfer' state fwdData
       | _ready bwdData = transfer' state fwdData
       | otherwise = (state, Nothing)
-  
+
     outwardsData :: Signal dom (Maybe (PacketStreamM2S 2 ()))
-    outwardsData = mealy transfer EBNone (bundle (bwd, fwd))
+    outwardsData = mealy transfer EBMagic (bundle (bwd, fwd))
 
     out = (Ack . DM.isJust <$> outwardsData, outwardsData)
 
