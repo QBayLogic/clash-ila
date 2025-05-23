@@ -121,6 +121,11 @@ impl IlaPredicate {
             ila,
             &IlaRegisters::Compare(ReadWrite::Write(self.compare.to_data())),
         ))
+        .and(perform_register_operation(
+            medium,
+            ila,
+            &IlaRegisters::TriggerReset,
+        ))
         // We don't care for the output, just about if it errors or not, so we map it to ()
         .map(|_| ())
     }
@@ -213,6 +218,7 @@ impl SignalCluster {
                 let mut combined = self
                     .cluster
                     .iter()
+                    .rev()
                     .map(|signal| signal.samples.get(index).cloned().unwrap_or(BitVec::EMPTY))
                     .fold(BitVec::<u8, Msb0>::EMPTY, |mut acc, bv| {
                         for c in bv.iter() {
@@ -259,7 +265,7 @@ impl SignalCluster {
 
         for transaction in bitvecs {
             let mut bit_range_start = 0;
-            for signal in &mut signals {
+            for signal in signals.iter_mut().rev() {
                 let bit_range_end = bit_range_start + signal.width;
 
                 let bits = transaction[bit_range_start..bit_range_end].to_owned();
@@ -267,6 +273,7 @@ impl SignalCluster {
 
                 bit_range_start = bit_range_end;
             }
+            // break;
         }
 
         SignalCluster {

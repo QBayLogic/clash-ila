@@ -61,7 +61,7 @@ ilaCore size capture i freeze bufClear = buffer
       size
       undefined
       bufClear
-      (mux (not <$> freeze .&&. capture) (Just <$> i) (pure Nothing))
+      (mux ((not <$> freeze) .&&. capture) (Just <$> i) (pure Nothing))
 
 {- | Get a specific word of `a`, which may be several words wide
 The width of `word` is defined by the user of the function
@@ -154,10 +154,19 @@ ilaBufferManager buffer incoming = bufferData
 data IlaPredicateOperation = PredicateAND | PredicateOR
   deriving (Generic, NFDataX, Show, Enum, BitPack)
 
--- | The actual operation associated with this predicate operation
-predicateOp :: (Foldable t) => IlaPredicateOperation -> (t Bool -> Bool)
-predicateOp PredicateAND = and
-predicateOp PredicateOR = or
+-- | The operator used to combine the results of multiple predicates
+predicateOperation :: (Foldable t) => IlaPredicateOperation -> (t Bool -> Bool)
+predicateOperation PredicateAND = and
+predicateOperation PredicateOR = or
+
+-- | The default value when a predicate is not selected
+-- This is behaviour is different depending on how they will be combined, if the end result gets
+-- AND'd together, having the default be false would always result to the predicate system failing.
+predicateUnselectedDefault :: IlaPredicateOperation -> Bool -> Bool -> Bool
+predicateUnselectedDefault PredicateAND False _ = True
+predicateUnselectedDefault PredicateAND True result = result
+predicateUnselectedDefault PredicateOR False _ = False
+predicateUnselectedDefault PredicateOR True result = result
 
 {- | A record containing the values stored in the ILA register map. Not all values are read/writeable
 from the outside.
@@ -352,10 +361,11 @@ ilaWb (IlaConfig @_ @a @depth @m depth initTriggerPoint ilaHash tracing triggers
     -- \| Selects the right predicate and applies it on incoming sample
     doesTrigger :: IlaRM (BitSize a) depth m -> a -> Bool
     doesTrigger rm currentSample =
-      predicateOp rm.triggerOperation
+      -- ilaPredicateEq currentSample rm.triggerCompare rm.triggerMask
+      predicateOperation rm.triggerOperation
         $ zipWith
-          (&&)
-          (unpack $ resize rm.triggerSelect)
+          (predicateUnselectedDefault rm.triggerOperation)
+          (reverse . unpack $ resize rm.triggerSelect)
           ((\trigger -> trigger currentSample rm.triggerCompare rm.triggerMask) <$> triggers)
 
     -- \| Handle WB writes and update the memory map accordingly,

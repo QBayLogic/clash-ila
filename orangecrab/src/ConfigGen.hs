@@ -1,9 +1,9 @@
 {-# LANGUAGE DuplicateRecordFields #-}
 {-# LANGUAGE OverloadedRecordDot #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE TypeAbstractions #-}
 {-# LANGUAGE UndecidableInstances #-}
 {-# LANGUAGE NoFieldSelectors #-}
-{-# LANGUAGE TypeAbstractions #-}
 
 module ConfigGen where
 
@@ -49,39 +49,30 @@ type Predicate a =
 -- | Same as `Predicate a` but with a string to display in the CLI
 type NamedPredicate a = (Predicate a, String)
 
--- | Default ILA predicate for checking equality
--- It applies the mask over the incoming sample and `==` it with the compare value
+{- | Default ILA predicate for checking equality
+It applies the mask over the incoming sample and `==` it with the compare value
+-}
 ilaPredicateEq :: (BitPack a) => Predicate a
-ilaPredicateEq s c m = pack s .&. m == c
+ilaPredicateEq s c m = ((pack s) .&. m) == c
 
--- | Default ILA predicate for checking less-than
--- It applies the mask over the incoming sample and `<` it with the compare value
+{- | Default ILA predicate for checking less-than
+It applies the mask over the incoming sample and `<` it with the compare value
+-}
 ilaPredicateLt :: (BitPack a) => Predicate a
-ilaPredicateLt s c m = pack s .&. m < c
+ilaPredicateLt s c m = ((pack s) .&. m) < c
 
--- | Default ILA predicate for checking less-than-or-equal-to
--- It applies the mask over the incoming sample and `<=` it with the compare value
-ilaPredicateLte :: (BitPack a) => Predicate a
-ilaPredicateLte s c m = pack s .&. m <= c
-
--- | Default ILA predicate for checking greater-than
--- It applies the mask over the incoming sample and `>` it with the compare value
+{- | Default ILA predicate for checking greater-than
+It applies the mask over the incoming sample and `>` it with the compare value
+-}
 ilaPredicateGt :: (BitPack a) => Predicate a
-ilaPredicateGt s c m = pack s .&. m > c
+ilaPredicateGt s c m = ((pack s) .&. m) > c
 
--- | Default ILA predicate for checking greater-than-or-equal-to
--- It applies the mask over the incoming sample and `>=` it with the compare value
-ilaPredicateGte :: (BitPack a) => Predicate a
-ilaPredicateGte s c m = pack s .&. m >= c
-
--- | Predefined list of five ILA predicates. The operators it covers are: `==`, `>`, `>=`, `<`, `<=`
-ilaDefaultPredicates :: (BitPack a) => Vec 5 (NamedPredicate a)
+-- | Predefined list of three ILA predicates. The operators it covers are: `==`, `>`, `<`
+ilaDefaultPredicates :: (BitPack a) => Vec 3 (NamedPredicate a)
 ilaDefaultPredicates =
   ( (ilaPredicateEq, "Equals")
       :> (ilaPredicateGt, "Greater than")
-      :> (ilaPredicateGte, "Greater than or equals")
       :> (ilaPredicateLt, "Less than")
-      :> (ilaPredicateLte, "Less than or equals")
       :> Nil
   )
 
@@ -271,17 +262,19 @@ signalInfoBBF _ _ args _ = view tcCache >>= go
   go tcm
     | [toplevel, _, sigInfo, triggerNames] <- lefts args
     , [ (coreView tcm -> LitTy (NumTy n))
-      , (coreView tcm -> LitTy (NumTy m))
-      , (coreView tcm -> LitTy (NumTy s))
-      ] <- rights args
+        , (coreView tcm -> LitTy (NumTy m))
+        , (coreView tcm -> LitTy (NumTy s))
+        ] <-
+        rights args
     , Just (SomeNat (Proxy :: Proxy n)) <- someNatVal n
     , Just (SomeNat (Proxy :: Proxy m)) <- someNatVal m
     , Just (SomeNat (Proxy :: Proxy s)) <- someNatVal s =
-        mkBlackBox $ getGenIla @n @m @s
-          toplevel
-          (SNat @s)
-          (getSigInfo sigInfo)
-          (coerceToType triggerNames "cry")
+        mkBlackBox
+          $ getGenIla @n @m @s
+            toplevel
+            (SNat @s)
+            (getSigInfo sigInfo)
+            (coerceToType triggerNames "cry")
     | otherwise = errorX "Improper data given, expected Vec n (Int, String)"
 
   -- \| Make the actual blackbox
@@ -317,7 +310,7 @@ signalInfoBBF _ _ args _ = view tcCache >>= go
     Vec n (Int, String) ->
     Vec m (String) ->
     GenIla
-  getGenIla toplevel bufSize sigInfo triggerNames  =
+  getGenIla toplevel bufSize sigInfo triggerNames =
     GenIla
       { toplevel = coerceToType toplevel "toplevel name"
       , bufferSize = snatToNum bufSize

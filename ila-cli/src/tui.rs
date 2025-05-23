@@ -27,12 +27,12 @@ use crate::ui::textinput::{TextPrompt, TextPromptState};
 use crate::vcd::write_to_vcd;
 
 /// The keybind text displayed in the TUI
-const KEYBIND_TEXT: &'static str = r#"  C-c   ---   Exit
-  space ---   Read samples (if triggered)
-  t     ---   Change trigger point
-  c     ---   Change trigger logic
-  r     ---   Reset trigger
-  v     ---   Write signals to VCD dump
+const KEYBIND_TEXT: &'static str = r#"  CTRL-c   ---   Exit
+  space  ---   Read samples (if triggered)
+  t      ---   Change trigger point
+  p      ---   Change trigger predicates
+  r      ---   Reset trigger
+  v      ---   Write signals to VCD dump
 "#;
 
 /// The reason to prompt the user with, mostly important to decide what to do next after a user has
