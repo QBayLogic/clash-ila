@@ -177,7 +177,7 @@ from the outside.
 A lot of the register map is also exposed as a memory map, with the following layout:
 |   Address   | Bus Select |      Description      |  Operation  |
 |-------------|------------|-----------------------|-------------|
-| 0x0000_0000 | 0b0001     | Capture               | ReadWrite   |
+| 0x0000_0000 | 0b0001     | Capture               | Read        |
 | 0x0000_0000 | 0b0010     | Trigger reset         | ReadWrite'1 |
 | 0x0000_0001 | 0b1111     | Trigger point         | ReadWrite   |
 | 0x0000_0002 | 0b1111     | ILA hash              | Read        |
