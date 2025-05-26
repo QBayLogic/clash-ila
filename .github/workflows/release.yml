@@ -17,7 +17,7 @@ jobs:
           run-id: ${{ github.event.workflow_run.id }}
           github-token: ${{ github.token }}
       - name: List downloaded artifacts
-        run: ls ila-cli/target/release/
+        run: ls **
       - name: Release clash-ila
         uses: "marvinpinto/action-automatic-releases@latest"
         with:
