@@ -29,7 +29,7 @@ use crate::ui::textinput::TextPromptState;
 use crate::vcd::write_to_vcd;
 
 /// The keybind text displayed in the TUI
-const KEYBIND_TEXT: &'static str = r#"  CTRL-c ---   Exit
+const KEYBIND_TEXT: &str = r#"  CTRL-c ---   Exit
   space  ---   Read samples (if triggered)
   t      ---   Change trigger point
   p      ---   Change trigger predicates
@@ -185,7 +185,11 @@ impl<'a> TuiSession<'a> {
             let info_log_section = Paragraph::new(
                 self.log
                     .iter()
-                    .map(|s| format!("{s}\n"))
+                    .cloned()
+                    .map(|mut s| {
+                        s.push('\n');
+                        s
+                    })
                     .collect::<String>(),
             )
             .block(Block::default().borders(Borders::TOP));
@@ -259,7 +263,7 @@ impl<'a> TuiSession<'a> {
             (TuiState::Main, KeyCode::Char(' '), _) => {
                 self.triggered = match perform_register_operation(
                     tx_port,
-                    &self.config,
+                    self.config,
                     &IlaRegisters::TriggerState,
                 ) {
                     Ok(RegisterOutput::TriggerState(state)) => state,
@@ -276,13 +280,13 @@ impl<'a> TuiSession<'a> {
                     let indices: Vec<u32> = (0_u32..self.config.buffer_size as u32).collect();
                     match perform_register_operation(
                         tx_port,
-                        &self.config,
+                        self.config,
                         &IlaRegisters::Buffer(indices),
                     ) {
                         Ok(RegisterOutput::BufferContent(cluster)) => self.captured.push(cluster),
                         Ok(_) => self
                             .log
-                            .push(format!("Unexpected output when reading buffer")),
+                            .push("Unexpected output when reading buffer".into()),
                         Err(err) => self.log.push(format!("Error: {err}")),
                     }
                 }
@@ -299,7 +303,7 @@ impl<'a> TuiSession<'a> {
                 if let Ok(predicate) =
                     IlaPredicate::from_ila(tx_port, self.config, PredicateTarget::Trigger)
                 {
-                    self.state = TuiState::Predicates(PredState::new(&self.config, predicate));
+                    self.state = TuiState::Predicates(PredState::new(self.config, predicate));
                 } else {
                     self.log.push(
                         "Unable to retrieve current trigger predicate configuration from the ILA"
@@ -312,7 +316,7 @@ impl<'a> TuiSession<'a> {
                 if let Ok(predicate) =
                     IlaPredicate::from_ila(tx_port, self.config, PredicateTarget::Capture)
                 {
-                    self.state = TuiState::Predicates(PredState::new(&self.config, predicate));
+                    self.state = TuiState::Predicates(PredState::new(self.config, predicate));
                 } else {
                     self.log.push(
                         "Unable to retrieve current capture predicate configuration from the ILA"
@@ -413,28 +417,22 @@ impl<'a> TuiSession<'a> {
                 //
                 // Rewriting it would take quite some time, time I do not have at the moment
                 if let TuiState::Predicates(state) = &mut self.state {
-                    match raw_event {
-                        Ok(ref event) => {
-                            let stop_program =
-                                state.handle_event(&mut tx_port, &self.config, event);
-                            self.render();
+                    if let Ok(ref event) = raw_event {
+                        let stop_program = state.handle_event(&mut tx_port, self.config, event);
+                        self.render();
 
-                            match stop_program {
-                                crate::predicates_tui::PredicateEventResponse::QuitProgram => {
-                                    return
-                                }
-                                crate::predicates_tui::PredicateEventResponse::MainMenu((
-                                    log,
-                                    changes,
-                                )) => {
-                                    self.state = TuiState::Main;
-                                    self.log.push(log);
-                                    should_rearm = changes;
-                                }
-                                crate::predicates_tui::PredicateEventResponse::Nothing => continue,
+                        match stop_program {
+                            crate::predicates_tui::PredicateEventResponse::QuitProgram => return,
+                            crate::predicates_tui::PredicateEventResponse::MainMenu((
+                                log,
+                                changes,
+                            )) => {
+                                self.state = TuiState::Main;
+                                self.log.push(log);
+                                should_rearm = changes;
                             }
+                            crate::predicates_tui::PredicateEventResponse::Nothing => continue,
                         }
-                        Err(_) => (),
                     }
                 }
 
@@ -456,7 +454,7 @@ impl<'a> TuiSession<'a> {
                 if should_rearm && self.auto_reset {
                     let log_message = match perform_register_operation(
                         &mut tx_port,
-                        &self.config,
+                        self.config,
                         &IlaRegisters::TriggerReset,
                     ) {
                         Ok(_) => "Auto-rearmed the trigger",
@@ -471,7 +469,7 @@ impl<'a> TuiSession<'a> {
             if duration >= Duration::from_millis(500) {
                 self.triggered = match perform_register_operation(
                     &mut tx_port,
-                    &self.config,
+                    self.config,
                     &IlaRegisters::TriggerState,
                 ) {
                     Ok(RegisterOutput::TriggerState(state)) => state,

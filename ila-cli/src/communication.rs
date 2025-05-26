@@ -1,10 +1,8 @@
-
 use crate::config::IlaConfig;
 use crate::predicates::PredicateOperation;
 use crate::wishbone::WbTransaction;
 use bitvec::prelude::{BitVec, Msb0};
 use bitvec::slice::BitSlice;
-use bitvec::store::BitStore;
 use bitvec::view::BitView;
 use std::io::{Read as IoRead, Result as IoResult, Write as IoWrite};
 use std::time::Duration;
@@ -70,8 +68,7 @@ impl SignalCluster {
                 combined
             })
             // Take the raw bytes
-            .map(|bv| bv.chunks(8).map(bv_to_u8).collect::<Vec<u8>>())
-            .flatten()
+            .flat_map(|bv| bv.chunks(8).map(bv_to_u8).collect::<Vec<u8>>())
             .collect()
     }
 
@@ -202,10 +199,9 @@ impl IlaRegisters {
             IlaRegisters::Buffer(_) => {
                 RegisterOutput::BufferContent(SignalCluster::from_data(ila, output))
             }
-            IlaRegisters::TriggerState => RegisterOutput::TriggerState(match output.get(0) {
-                Some(1) => true,
-                _ => false,
-            }),
+            IlaRegisters::TriggerState => {
+                RegisterOutput::TriggerState(matches!(output.first(), Some(1)))
+            }
             IlaRegisters::TriggerReset => RegisterOutput::None,
             IlaRegisters::TriggerPoint(_) => RegisterOutput::None,
 
@@ -217,13 +213,13 @@ impl IlaRegisters {
                 RegisterOutput::TriggerCompare(SignalCluster::from_data(ila, output))
             }
             IlaRegisters::TriggerCompare(ReadWrite::Write(_)) => RegisterOutput::None,
-            IlaRegisters::TriggerOp(ReadWrite::Read(_)) => match output.get(0) {
+            IlaRegisters::TriggerOp(ReadWrite::Read(_)) => match output.first() {
                 Some(n) => PredicateOperation::try_from(*n)
-                    .map_or_else(|_| RegisterOutput::None, |op| RegisterOutput::TriggerOp(op)),
+                    .map_or_else(|_| RegisterOutput::None, RegisterOutput::TriggerOp),
                 None => RegisterOutput::None,
             },
             IlaRegisters::TriggerOp(ReadWrite::Write(_)) => RegisterOutput::None,
-            IlaRegisters::TriggerSelect(ReadWrite::Read(_)) => match output.get(0) {
+            IlaRegisters::TriggerSelect(ReadWrite::Read(_)) => match output.first() {
                 Some(n) => RegisterOutput::TriggerSelect(*n),
                 None => RegisterOutput::None,
             },
@@ -242,13 +238,13 @@ impl IlaRegisters {
                 RegisterOutput::CaptureCompare(SignalCluster::from_data(ila, output))
             }
             IlaRegisters::CaptureCompare(ReadWrite::Write(_)) => RegisterOutput::None,
-            IlaRegisters::CaptureOp(ReadWrite::Read(_)) => match output.get(0) {
+            IlaRegisters::CaptureOp(ReadWrite::Read(_)) => match output.first() {
                 Some(n) => PredicateOperation::try_from(*n)
-                    .map_or_else(|_| RegisterOutput::None, |op| RegisterOutput::CaptureOp(op)),
+                    .map_or_else(|_| RegisterOutput::None, RegisterOutput::CaptureOp),
                 None => RegisterOutput::None,
             },
             IlaRegisters::CaptureOp(ReadWrite::Write(_)) => RegisterOutput::None,
-            IlaRegisters::CaptureSelect(ReadWrite::Read(_)) => match output.get(0) {
+            IlaRegisters::CaptureSelect(ReadWrite::Read(_)) => match output.first() {
                 Some(n) => RegisterOutput::CaptureSelect(*n),
                 None => RegisterOutput::None,
             },

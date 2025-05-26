@@ -4,9 +4,9 @@ use std::{
 };
 
 use crate::{
-    predicates::{IlaPredicate, PredicateOperation, PredicateTarget},
     communication::{Signal, SignalCluster},
     config::{IlaConfig, IlaSignal},
+    predicates::{IlaPredicate, PredicateOperation, PredicateTarget},
     ui::textinput::TextPromptState,
 };
 use bitvec::{
@@ -69,10 +69,7 @@ impl NumericState {
 
     /// If this `NumericState` has a prefix to identify itself within a string
     fn has_prefix(&self) -> bool {
-        match self {
-            NumericState::Decimal => false,
-            _ => true,
-        }
+        matches!(self, NumericState::Decimal)
     }
 
     /// Attempt to parse the number into a `BigUint` based on the `NumericState`
@@ -92,7 +89,7 @@ impl NumericState {
     fn immediate_parse(str: &str) -> Result<BigUint, ParseBigIntError> {
         let state = Self::new(str);
         let non_prefix = match state.has_prefix() {
-            true => str.get(2..).unwrap_or(""),
+            true => str.get(2..).unwrap_or_default(),
             false => str,
         };
 
@@ -124,10 +121,13 @@ impl PredicatePage for GeneralPage {
         .split(area);
 
         f.render_widget("General predicate settings".bold(), layout[0]);
-        f.render_widget(match state.target {
-            PredicateTarget::Trigger => "The general predicates page for trigger configuration",
-            PredicateTarget::Capture => "The general predicates page for capture configuration",
-        }, layout[1]);
+        f.render_widget(
+            match state.target {
+                PredicateTarget::Trigger => "The general predicates page for trigger configuration",
+                PredicateTarget::Capture => "The general predicates page for capture configuration",
+            },
+            layout[1],
+        );
 
         f.render_widget("Predicate operation", layout[2]);
         state
@@ -397,7 +397,7 @@ pub struct State<'a> {
     compare_state: Vec<TextPromptState<()>>,
 }
 
-impl<'a> State<'_> {
+impl State<'_> {
     /// Create a new predicates configuration interface
     ///
     /// An initial `IlaPredicate` configuration has to be provided to set the initial values within
@@ -423,7 +423,7 @@ impl<'a> State<'_> {
                 .filter_map(|signal| {
                     signal
                         .samples
-                        .get(0)
+                        .first()
                         .map(|sample| (bitvec_to_words(sample), signal.width))
                 })
                 .map(|(v, width)| {
