@@ -1,5 +1,6 @@
 {-# LANGUAGE DuplicateRecordFields #-}
 {-# LANGUAGE OverloadedRecordDot #-}
+{-# LANGUAGE UndecidableInstances #-}
 {-# LANGUAGE NoFieldSelectors #-}
 {-# OPTIONS_GHC -fconstraint-solver-iterations=10 #-}
 {-# OPTIONS_GHC -fplugin=Protocols.Plugin #-}
@@ -8,14 +9,19 @@ module Ila where
 
 import Clash.Prelude
 import ConfigGen
-import Packet
 import RingBuffer
+import WishboneUtils
 
 import Data.Data
 import Data.Maybe as DM
 
+import Clash.Cores.Etherbone (etherboneC)
+import Clash.Cores.UART (ValidBaud)
+import Communication
 import Protocols
 import Protocols.PacketStream
+import Protocols.Wishbone
+import SignalFieldSelectors
 
 {- | The buffer of the ila, with signals to control wether or not the signals get captured
 
@@ -27,6 +33,7 @@ ilaCore ::
   forall dom size a.
   ( HiddenClockResetEnable dom
   , NFDataX a
+  , BitPack a
   , KnownNat size
   , 1 <= size
   ) =>
@@ -49,123 +56,283 @@ ilaCore size capture i freeze bufClear = buffer
       size
       undefined
       bufClear
-      (mux (freeze .&&. capture) (Just <$> i) (pure Nothing))
+      (mux (not <$> freeze .&&. capture) (Just <$> i) (pure Nothing))
 
-{- | The trigger handler of the ILA
-
-Given a predicate, it will test it against incoming samples and tell the buffer to stop sampling
-new data or not.
+{- | Get a specific word of `a`, which may be several words wide
+The width of `word` is defined by the user of the function
 -}
-triggerController ::
-  forall dom size a.
+getWord ::
+  forall word input n.
+  ( BitPack input
+  , KnownNat word
+  , KnownNat n
+  , n ~ BitSize input `DivRU` word
+  ) =>
+  -- | The input
+  input ->
+  -- | The index of the word we want
+  Index n ->
+  -- | The output word
+  BitVector word
+getWord a i = (unpack . resize $ pack a :: Vec n (BitVector word)) !! i
+
+{- | Retrieves a specific word from the ILA buffer. It will only listen to addresses within the
+range of 0x3000_0000 and 0x3fff_ffff. Each address refers to a specific word (=32 bits) in the
+buffer.
+
+Samples may not precisely equal 32 bits. They may be smaller or bigger than 32 bits. However, in
+this function each sample is assigned one or more addresses for each word it's width takes up.
+So a 10 bit sample will only take up one address, and a 50 bit one would take up 2 addresses.
+Different samples never share the same memory space.
+
+The memory remains consecutive
+-}
+ilaBufferManager ::
+  forall dom depth a addrW.
   ( HiddenClockResetEnable dom
-  , NFDataX a
   , BitPack a
-  , KnownNat size
-  , 1 <= BitSize a `DivRU` 8
-  , 1 <= size
+  , KnownNat depth
+  , KnownNat addrW
+  , 1 <= BitSize a `DivRU` 32
+  , 1 <= depth
   ) =>
-  -- | The configuration of the ILA
-  IlaConfig size (Signal dom a) ->
-  -- | Trigger signal
-  Signal dom Bool ->
-  -- | The ILA Core
-  ( Signal dom a ->
-    Signal dom Bool ->
-    Signal dom Bool ->
-    (Signal dom (Index size) -> (Signal dom a, Signal dom (Index (size + 1))))
-  ) ->
-  -- | Circuit outputting the content of the buffer whenever the predicate has been triggered
-  -- The input signal is to clear the trigger
-  Circuit
-    (CSignal dom (Maybe (Index size)), CSignal dom Bool)
-    (PacketStream dom (BitSize a `DivRU` 8) IlaDataHeader)
-triggerController config predicate core = Circuit exposeIn
+  -- | The ILA buffer
+  (Signal dom (Index depth) -> (Signal dom a, Signal dom (Index (depth + 1)))) ->
+  -- | The incoming Wishbone M2S signal
+  Signal dom (WishboneM2S addrW 4 (BitVector 32)) ->
+  -- | The specific word associated with the requested address, if the current cycle is a read cycle
+  -- it will return `0` instead.
+  Signal dom (BitVector 32)
+ilaBufferManager buffer incoming = bufferData
  where
-  exposeIn ((newTrigPoint, triggerRst), backpressure) = out
-   where
-    triggerPoint = register config.triggerPoint $ liftA2 DM.fromMaybe triggerPoint newTrigPoint
+  -- \| Returns the index and word index of the current address provided
+  getBufferIndex ::
+    WishboneM2S addrW 4 (BitVector 32) -> (Index depth, Index (BitSize a `DivRU` 32))
+  getBufferIndex m2s =
+    let
+      (bIndex, wIndex) = (m2s.addr - 0x3000_0000) `divMod` (natToNum @(BitSize a `DivRU` 32))
+     in
+      (unpack $ resize bIndex, unpack $ resize wIndex)
+  (bufferIndex, wordIndex) = unbundle $ getBufferIndex <$> incoming
 
-    postTriggerSampled :: Signal dom (Index size)
-    postTriggerSampled = register 0 $ mux triggered (satAdd SatBound 1 <$> postTriggerSampled) 0
+  -- \| If in a read cycle, it will contain the output of the buffer, otherwise it will return 0
+  bufferData =
+    mux
+      (not . writeEnable <$> incoming .&&. compareAddrRange 0x3000_0000 0x3fff_ffff incoming)
+      (liftA2 (getWord @32) (fst $ buffer bufferIndex) wordIndex)
+      (pure 0)
 
-    triggered :: Signal dom Bool
-    triggered =
-      register False $ mux triggerRst (pure False) triggered .||. predicate
+{- | A record containing the values stored in the ILA register map. Not all values are read/writeable
+from the outside.
 
-    shouldSample :: Signal dom Bool
-    shouldSample = not <$> triggered .||. postTriggerSampled .<. triggerPoint
+A lot of the register map is also exposed as a memory map, with the following layout:
+|   Address   | Bus Select |      Description      |  Operation  |
+|-------------|------------|-----------------------|-------------|
+| 0x0000_0000 | 0b0001     | Capture               | ReadWrite   |
+| 0x0000_0000 | 0b0010     | Trigger reset         | ReadWrite'1 |
+| 0x0000_0001 | 0b1111     | Trigger point         | ReadWrite   |
+| 0x0000_0002 | 0b1111     | ILA hash              | Read        |
+| 0x3000_0000 | 0b1111     | Buffer samples        | Read        |
 
-    buffer = core config.tracing shouldSample triggerRst
-    Circuit packet = dataPacket config.hash <| mapMeta (\_ -> ()) <| ringBufferReaderPS buffer
-
-    out = ((pure (), pure ()), snd $ packet (triggered, backpressure))
-
--- | A signal fanout, simply duplicates a signal n times
-fanoutCSig ::
-  forall dom n a.
-  (KnownNat n) =>
-  -- | The amount of times to 'duplicate' the signal
-  SNat n ->
-  -- | The circuit, where the input will be duplicated n times and returned as the output
-  Circuit
-    (CSignal dom a)
-    (Vec n (CSignal dom a))
-fanoutCSig _ = Circuit go
- where
-  go (fwd, _) = (pure (), repeat fwd)
-
--- | Checks if an incoming packet should re-arm the the trigger (reset the trigger)
-rearmTrigger ::
-  forall dom.
-  (HiddenClockResetEnable dom) =>
-  -- | The circuit, input is the incoming packet (if there is one) and the output returns a bool
-  -- indicating wether or not it should re-arm the trigger
-  Circuit
-    (CSignal dom (Maybe IlaIncomingPacket))
-    (CSignal dom Bool)
-rearmTrigger = Circuit exposeIn
- where
-  exposeIn (fwdIn, _) = out
-   where
-    rearm (Just IlaResetTrigger) = True
-    rearm _ = False
-
-    out = (pure (), rearm <$> fwdIn)
-
-{- | Checks if an incoming packet should change the trigger point of the ILA, and if it should
-what index should it reset at?
-
-NOTE: due to the `IlaChangeTriggerPoint` using a bv32, values bigger than the buffer `size` itself
-will be truncated on a bit level. That may result in some unexpected values, the simple solution
-is to not send out values bigger than `size`
+'1: Reading from this address will return wether or not the ILA has been triggered or not
 -}
-changeTriggerPoint ::
-  forall dom size.
-  ( HiddenClockResetEnable dom
-  , KnownNat size
-  , 1 <= size
-  ) =>
-  -- The circuit, input is an incoming packet (if there is one) and the output is the new trigger
-  -- point, if the packet is a `IlaChangeTriggerPoint`, otherwise returns `Nothing`
-  Circuit
-    (CSignal dom (Maybe IlaIncomingPacket))
-    (CSignal dom (Maybe (Index size)))
-changeTriggerPoint = Circuit exposeIn
- where
-  exposeIn (fwdIn, _) = out
-   where
-    newTrigger (Just (IlaChangeTriggerPoint new)) = Just $ unpack . resize $ pack new
-    newTrigger _ = Nothing
+data IlaRM depth = IlaRM
+  { capture :: Bool
+  -- ^ If the ILA should be capturing signals
+  , triggered :: Bool
+  -- ^ Indicates if the ILA has been triggered. Note; this does not directly mean it stopped capturing,
+  -- depending on the `triggerPoint` it may still be sampling new values.
+  , triggerPoint :: Index depth
+  -- ^ The amount of signals to capture *after* triggering
+  , shouldSample :: Bool
+  -- ^ Indicates if the ILA should continue sampling data. This gets automatically set after the
+  -- ILA has been triggered and enough samples have been collected. It will only get out of this
+  -- state by resetting the ILA.
+  , sampledAfterTrigger :: Index depth
+  -- ^ The amount of samples the ILA captured after triggering
+  }
+  deriving (Generic, NFDataX, Show)
 
-    out = (pure (), newTrigger <$> fwdIn)
+deriveSignalHasFields ''IlaRM
+
+-- | Read from memory mapped registers in the register map using the addresses selected from a
+-- wishbone packet
+readIlaMM ::
+  ( KnownNat depth
+  , 1 <= depth
+  ) =>
+  -- | The wishbone address
+  BitVector 32 ->
+  -- | The wishbone bus select
+  BitVector 4 ->
+  -- | The ILA MM
+  IlaRM depth ->
+  -- | Associated value with the address and bus select, `Nothing` if there is none
+  Maybe (BitVector 32)
+readIlaMM 0x0000_0000 0b0001 mm = Just . extend $ pack mm.capture
+readIlaMM 0x0000_0000 0b0010 mm = Just . extend $ pack mm.triggered
+readIlaMM 0x0000_0001 0b1111 mm = Just . resize $ pack mm.triggerPoint
+-- readIlaMM 0x0000_0002 0b1111 mm = Just . extend $ pack mm.hash
+readIlaMM _ _ _ = Nothing
+
+{- | Certain registers trigger 'actions' rather than save a value, this enum allows the ILA to
+properly respond to those requests
+-}
+data IlaAction = None | ResetTrigger
+  deriving (Generic, Eq, NFDataX, Show, Enum)
+
+-- | Update the memory mapped registers from the register map from the wishbone request
+writeIlaMM ::
+  ( KnownNat depth
+  , 1 <= depth
+  ) =>
+  -- | The wishbone address
+  BitVector 32 ->
+  -- | The wishbone bus select
+  BitVector 4 ->
+  -- | The value to write
+  BitVector 32 ->
+  -- | The Ila register map
+  IlaRM depth ->
+  -- | Updated Ila register map, invalid addresses will not modify the register map
+  (IlaRM depth, IlaAction)
+writeIlaMM 0x0000_0000 0b0001 write rm = (rm{capture = unpack $ truncateB write}, None)
+writeIlaMM 0x0000_0000 0b0010 _write rm = (rm{triggered = False}, ResetTrigger)
+writeIlaMM 0x0000_0001 0b1111 write rm = (rm{triggerPoint = unpack $ resize write}, None)
+writeIlaMM _ _ _ rm = (rm, None)
+
+{- | ILA Wishbone interface
+
+This circuit can be used to instantiate and configure an ILA using a wishbone interface. Changing
+ILA behaviour is done by writing to specific addresses and selecting the right bytes using busSelect.
+-}
+ilaWb ::
+  forall dom depth a.
+  ( HiddenClockResetEnable dom
+  , BitPack a
+  , NFDataX a
+  , KnownNat depth
+  , 1 <= BitSize a `DivRU` 32
+  , 1 <= depth
+  ) =>
+  -- | Initial ILA configuration
+  IlaConfig depth (Signal dom a) ->
+  -- | Signal indicating if the predicate has triggered
+  Signal dom Bool ->
+  -- | The ILA wishbone interface
+  Circuit
+    (Wishbone dom Standard 32 (BitVector 32))
+    ()
+ilaWb config predicate = Circuit exposeIn
+ where
+  exposeIn (fwdM2S, _) = out
+   where
+    -- \| The initial contents of the memory map
+    initRM =
+      IlaRM
+        { capture = True
+        , triggered = False
+        , triggerPoint = config.triggerPoint
+        , shouldSample = True
+        , sampledAfterTrigger = 0
+        }
+
+    -- \| Update parts of the RM which aren't depending on input from WB
+    updateRM ::
+      -- \| If the predicate got triggered
+      Bool ->
+      -- \| The current register map
+      IlaRM depth ->
+      -- \| The updated register map
+      IlaRM depth
+    updateRM triggered rm =
+      rm
+        { triggered = triggered
+        , sampledAfterTrigger = satAdd SatBound 1 rm.sampledAfterTrigger
+        , shouldSample = not rm.triggered || rm.sampledAfterTrigger < rm.triggerPoint
+        }
+
+    -- \| Handle WB writes and update the memory map accordingly,
+    (ilaRM, ilaAction) =
+      unbundle $
+        moore
+          ( \(oldMM, _) (wb, triggered) ->
+              if wb.strobe && wb.busCycle && wb.writeEnable
+                then writeIlaMM wb.addr wb.busSelect wb.writeData $ updateRM triggered oldMM
+                else (oldMM, None)
+          )
+          id
+          (initRM, None)
+          (bundle (fwdM2S, predicate))
+
+    -- \| The output from the ILA's internal buffer
+    bufferOutput =
+      ilaBufferManager
+        ( ilaCore
+            config.size
+            ilaRM.capture
+            config.tracing
+            (not <$> ilaRM.shouldSample)
+            ((== ResetTrigger) <$> ilaAction)
+        )
+        fwdM2S
+
+    -- \| Distribute the read request to different parts of the ILA depending on the address & bus select
+    -- It will first attempt to read from the register map (& constant values), if there's no valid
+    -- address there. It will return the buffer content. If an invalid address gets read there,
+    -- it will return zero.
+    readManager' ::
+      -- \| The current WB packet
+      WishboneM2S 32 4 (BitVector 32) ->
+      -- \| The ila register map
+      IlaRM depth ->
+      -- \| The value the buffer is currently pointing at
+      BitVector 32 ->
+      -- \| The value the component should respond with
+      BitVector 32
+    readManager' wb rm bufValue
+      | wb.addr == 0x0000_0002 && wb.busSelect == 0b1111 = config.hash
+      | otherwise =
+          let
+            mmValue = readIlaMM wb.addr wb.busSelect rm
+           in
+            case mmValue of
+              Just v -> v
+              Nothing -> bufValue
+    readManager = liftA3 readManager' fwdM2S ilaRM bufferOutput
+
+    -- \| Generates the wishbone reply
+    reply ::
+      -- \| Wether or not we're in a cycle
+      Bool ->
+      -- \| The data to reply with (if in a read cycle)
+      BitVector 32 ->
+      -- \| The wishbone response
+      WishboneS2M (BitVector 32)
+    reply inCyc dat =
+      WishboneS2M
+        { readData = dat
+        , acknowledge = inCyc
+        , err = False
+        , stall = False
+        , retry = False
+        }
+
+    -- \| The first clock cycle shouldn't ack according to wishbone
+    delayedAck = inWbCycle <$> fwdM2S .&&. (register False $ inWbCycle <$> fwdM2S)
+     where
+      inWbCycle fwd = fwd.strobe && fwd.busCycle
+
+    -- Writes are done in one clock cycle, but wishbone timing requires us to delay it by one clock cycle
+    out = (register emptyWishboneS2M $ liftA2 reply delayedAck readManager, ())
 
 {- | The ILA component itself
 
-Given any signal and a trigger condition, it will be capable of sampling the signal up until
-it is triggered. At which point it will proceed to send out all the samples it captured via the
-`PacketStream` protocol. This data can than be forwarded to an external port and the ILA CLI
-will display this data.
+Given any set of signals and a trigger condition, it will be capable of sampling the signals up until
+it is triggered. At which point the connected host device can send commands to retrieve / re-arm the
+trigger. Data communication is being done through `Etherbone` packets which get sent from the host
+device. If run configuration of the ILA on the FPGA is desired, please look at `ilaWb` to instantiate
+an ILA with an Wishbone interface instead.
 -}
 ila ::
   forall dom size a.
@@ -173,30 +340,54 @@ ila ::
   , NFDataX a
   , BitPack a
   , KnownNat size
-  , 1 <= BitSize a `DivRU` 8
   , 1 <= size
+  , 1 <= BitSize a `DivRU` 32
   ) =>
-  -- | The configuration of the ILA
+  -- | The initial configuration of the ILA
   IlaConfig size (Signal dom a) ->
   -- | Trigger
   Signal dom Bool ->
-  -- | Capture
-  Signal dom Bool ->
-  -- | The ILA circuit, the input needs to be connected to some sort of byte input and the output
-  -- is a PacketStream containing bytes to be routed to the PC.
-  -- TODO: example? Not added one yet due to possible change in API
+  -- | The ILA circuit, the incoming packet stream should contain valid `Etherbone` packets. The
+  -- outgoing stream are etherbone response packets.
   Circuit
-    (CSignal dom (Maybe (BitVector 8)))
-    (PacketStream dom (BitSize a `DivRU` 8) IlaFinalHeader)
-ila config trigger capture = circuit $ \rxByte -> do
-  Fwd dec <- deserializeToPacket -< rxByte
+    (PacketStream dom 4 ())
+    (PacketStream dom 4 ())
+ila config triggered = circuit $ \incoming -> do
+  (outgoing, wbMaster) <- etherboneC 0 (pure Nil) -< incoming
 
-  triggerReset <- rearmTrigger -< Fwd dec
-  hasNewTrigger <- changeTriggerPoint -< Fwd dec
+  ilaWb config triggered -< wbMaster
 
-  controller <-
-    (triggerController config trigger $ ilaCore config.size capture)
-      -< (hasNewTrigger, triggerReset)
-  packets <- finalizePacket -< controller
+  idC -< outgoing
 
-  idC -< packets
+{- | UART wrapper around the ILA. A simple drop-in replacement for `ila`. Useful if the only
+connection to the host PC is an UART connection.
+-}
+ilaUart ::
+  forall dom size a baud.
+  ( HiddenClockResetEnable dom
+  , ValidBaud dom baud
+  , NFDataX a
+  , BitPack a
+  , KnownNat size
+  , 1 <= size
+  , 1 <= BitSize a `DivRU` 32
+  ) =>
+  SNat baud ->
+  -- | The initial configuration of the ILA
+  IlaConfig size (Signal dom a) ->
+  -- | Trigger
+  Signal dom Bool ->
+  -- | The ILA circuit but with signals of bits as input and output. These should be directly wired
+  -- to the toplevel UART RX and TX pins.
+  Circuit
+    (CSignal dom Bit)
+    (CSignal dom Bit)
+ilaUart baud config triggered = circuit $ \rxBit -> do
+  (rxByte, txBit) <- uartDf baud -< (txByte, rxBit)
+
+  rxPs <- etherboneDfPacketizer <| holdUntilAck -< rxByte
+  txByte <- ps2df -< txPs
+
+  txPs <- ila config triggered -< rxPs
+
+  idC -< txBit

@@ -83,14 +83,15 @@ library
   import: common-options
   hs-source-dirs: src
   exposed-modules:
+    SignalFieldSelectors
     Domain
     Pmod
     RGB
     RingBuffer
     Ila
     Communication
-    Packet
     ConfigGen
+    WishboneUtils
 
 test-suite unittests
   import: common-options
@@ -99,7 +100,6 @@ test-suite unittests
   main-is: Tests.hs
   other-modules:
     Tests.RingBuffer
-    Tests.Packet
     Tests.Communication
   build-depends:
     orangecrab

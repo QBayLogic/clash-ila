@@ -24,9 +24,10 @@ import Control.Lens (view)
 import Control.Monad.State (State)
 import Data.String.Interpolate (__i)
 import GHC.Stack (HasCallStack)
-import Prettyprinter (Doc, Pretty (pretty))
+import Prettyprinter (Doc, pretty)
 
-import Data.Aeson (ToJSON, encode)
+import Data.Aeson (ToJSON)
+import Data.Aeson.Text (encodeToLazyText)
 import Data.Data (Proxy (Proxy))
 import Data.Either
 import Data.Hashable (Hashable, hash)
@@ -91,18 +92,28 @@ instance
         :> Nil
 
 {- | A polyvariadic function containing 'labelled signals', aka, a list of tuples where the left
-side is an arbitary signal, and the right a string. 
+side is an arbitary signal, and the right a string.
 
 # Example:
 
->>> counter = register 0 $ counter + 1 :: Signal dom (Unsigned 8)
->>> active = pure True :: Signal dom Bool
->>> ilaProbe (counter, "8 bit value") (active "system active")
+>>> counter = register 0 $ counter + 1 :: Signal System (Unsigned 8)
+>>> active = pure True :: Signal System Bool
+>>> probe = ilaProbe (counter, "8 bit value") (active, "system active")
+>>> :t probe
+>>> probe
+  :: (LabelledSignals t 2 "System" (Unsigned 8, Bool),
+      Hidden "clock" (Clock System), Hidden "reset" (Reset System),
+      Hidden "enable" (Enable System)) =>
+      t
 -}
 ilaProbe :: (LabelledSignals ((Signal dom a, b) -> t) 0 dom a) => (Signal dom a, b) -> t
 ilaProbe first@(f, _) = ilaProbe' (Nil, f) first
 
--- | Write signal information to a file, using blackboxes
+{- | Write metadata of signals to a json file, this metadata includes the width of the signal and a
+given label
+
+The structure of the json file is defined at the `GenIla` record
+-}
 writeSignalInfo ::
   forall dom n s.
   (HiddenClockResetEnable dom) =>
@@ -134,7 +145,10 @@ writeSignalInfo !_toplevel !_bufSize !_sigInfo = 0
   )
   #-}
 
--- | The write signal blackbox function, grabs the AST from the context it gets invoked in
+{- | The actual blackbox function, this grabs the AST from the callstack, reconstructs the proper
+types from it and creates the blackbox & blackbox meta functions (which in turn write the reconstructed
+types to a file)
+-}
 signalInfoBBF :: (HasCallStack) => BlackBoxFunction
 signalInfoBBF _ _ args _ = view tcCache >>= go
  where
@@ -144,40 +158,38 @@ signalInfoBBF _ _ args _ = view tcCache >>= go
     , Just (SomeNat (Proxy :: Proxy n)) <- someNatVal n
     , Just (SomeNat (Proxy :: Proxy s)) <- someNatVal s =
         mkBlackBox $ getGenIla @n toplevel (SNat @s) (getSigInfo sigInfo)
-    | otherwise = errorX "Improper data given, expected Vec n (Int, String)"
+    | otherwise =
+        errorX
+          "AST does not match expected, expected AST in the form of String -> SNat -> Vec n (Int, String)"
 
   -- \| Make the actual blackbox
   mkBlackBox input = pure $ Right (blackBoxMeta input, blackBox input)
 
   -- \| Coerce a `Term` back into a type
   -- Panics on failure
-  coerceToType ::
+  coerceTermToType ::
     (TermLiteral a) =>
     -- \| The AST of the type
     Term ->
-    -- \| Error label, to be displayed if coercion fails
-    String ->
     -- \| The result type
     a
-  coerceToType term err = case termToData term of
-    Left _ -> errorX [__i|Cannot coerce term into an #{err}, cannot write ILA config|]
-    Right v -> v
+  coerceTermToType term = either errorX id $ termToDataError term
 
   -- \| Get the signal information from it's AST form
   getSigInfo :: forall n. (KnownNat n) => Term -> Vec n (Int, String)
-  getSigInfo term = coerceToType term "signal info"
+  getSigInfo term = coerceTermToType term
 
   -- \| Generate the ILA from the AST
   getGenIla ::
     forall n s. (KnownNat n, KnownNat s) => Term -> SNat s -> Vec n (Int, String) -> GenIla
   getGenIla toplevel bufSize sigInfo =
     GenIla
-      { toplevel = coerceToType toplevel "toplevel name"
+      { toplevel = coerceTermToType toplevel
       , bufferSize = snatToNum bufSize
       , hash =
           fromIntegral
             $ hash
-              ( coerceToType toplevel "toplevel name" :: String
+              ( coerceTermToType toplevel :: String
               , snatToInteger bufSize
               , toList sigInfo
               )
@@ -242,7 +254,7 @@ renderJSON ::
   BlackBoxContext ->
   -- | The output JSON content
   State s (Doc ())
-renderJSON ila _ = pure . pretty . LUTF8.toString $ encode ila
+renderJSON ila _ = pure . pretty $ encodeToLazyText ila
 {-# NOINLINE renderJSON #-}
 
 ilaConfig ::

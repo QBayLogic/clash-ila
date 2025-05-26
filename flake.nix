@@ -45,6 +45,7 @@
               # Rust subproject
               pkgs.cargo
               pkgs.rustc
+              pkgs.clippy
               # Required as we depend on libudev for tty iteration
               pkgs.pkg-config
               pkgs.udev
