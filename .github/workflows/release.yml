@@ -7,9 +7,29 @@ on:
       types: [completed]
 
 jobs:
-  release:
+  download-artifacts:
     runs-on: ubuntu-latest
     if: github.event.workflow_run.conclusion == 'success'
     steps:
       - run: echo "Release"
-        
+  release:
+    needs: download-artifacts
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download rust artifacts
+        uses: actions/download-artifact@v4.1.1
+        with:
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ github.token }}
+      - name: ls
+        run:
+          - ls ila-cli/target/release/ila-cli
+      # - uses: "marvinpinto/action-automatic-releases@latest"
+      #   with:
+      #     repo_token: "${{ secrets.GITHUB_TOKEN }}"
+      #     automatic_release_tag: "latest"
+      #     prerelease: true
+      #     title: "Development Build"
+      #     files: |
+      #       LICENSE.txt
+      #       *.jar
