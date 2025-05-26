@@ -21,9 +21,8 @@ jobs:
         with:
           run-id: ${{ github.event.workflow_run.id }}
           github-token: ${{ github.token }}
-      - name: ls
-        run:
-          - ls ila-cli/target/release/ila-cli
+      - name: List downloaded artifacts
+        run: ls -la artifacts
       # - uses: "marvinpinto/action-automatic-releases@latest"
       #   with:
       #     repo_token: "${{ secrets.GITHUB_TOKEN }}"
