@@ -1,0 +1,36 @@
+name: Release
+
+on:
+    workflow_run:
+      workflows: ["Rust"]
+      branches: ["main"]
+      types: [completed]
+
+jobs:
+  release:
+    if: github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download rust artifacts
+        uses: actions/download-artifact@v4.1.1
+        with:
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ github.token }}
+      - name: Release clash-ila
+        uses: "marvinpinto/action-automatic-releases@latest"
+        with:
+          repo_token: "${{ secrets.GITHUB_TOKEN }}"
+          automatic_release_tag: "latest"
+          prerelease: true
+          title: "Development Build"
+          files: |
+            ila-cli
+      # - uses: "marvinpinto/action-automatic-releases@latest"
+      #   with:
+      #     repo_token: "${{ secrets.GITHUB_TOKEN }}"
+      #     automatic_release_tag: "latest"
+      #     prerelease: true
+      #     title: "Development Build"
+      #     files: |
+      #       LICENSE.txt
+      #       *.jar

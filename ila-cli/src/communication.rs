@@ -106,7 +106,6 @@ impl SignalCluster {
 
                 bit_range_start = bit_range_end;
             }
-            // break;
         }
 
         SignalCluster {
