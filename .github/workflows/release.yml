@@ -2,18 +2,13 @@ name: Release
 
 on:
     workflow_run:
-      workflows: ["Haskell CI", "Rust Ci"]
+      workflows: ["Rust Ci"]
       branches: ["main"]
       types: [completed]
 
 jobs:
-  download-artifacts:
-    runs-on: ubuntu-latest
-    if: github.event.workflow_run.conclusion == 'success'
-    steps:
-      - run: echo "Release"
   release:
-    needs: download-artifacts
+    if: github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
     steps:
       - name: Download rust artifacts
