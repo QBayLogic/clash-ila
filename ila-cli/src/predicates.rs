@@ -176,11 +176,6 @@ impl IlaPredicate {
                     ila,
                     &IlaRegisters::TriggerCompare(ReadWrite::Write(self.compare.to_data())),
                 ))
-                .and(perform_register_operation(
-                    medium,
-                    ila,
-                    &IlaRegisters::TriggerReset,
-                ))
                 // We don't care for the output, just about if it errors or not, so we map it to ()
                 .map(|_| ())
             }
@@ -204,11 +199,6 @@ impl IlaPredicate {
                     medium,
                     ila,
                     &IlaRegisters::CaptureCompare(ReadWrite::Write(self.compare.to_data())),
-                ))
-                .and(perform_register_operation(
-                    medium,
-                    ila,
-                    &IlaRegisters::TriggerReset,
                 ))
                 // We don't care for the output, just about if it errors or not, so we map it to ()
                 .map(|_| ())

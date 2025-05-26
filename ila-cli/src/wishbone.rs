@@ -135,9 +135,7 @@ impl EBRecord {
         let mut bytes = self.packetize();
         medium.write_all(&bytes)?;
         medium.flush()?;
-        eprintln!("-tx-> {bytes:02x?}");
         medium.read_exact(&mut bytes)?;
-        eprintln!("<-rx- {bytes:02x?}");
 
         let mut words: Vec<u32> = bytes
             .chunks(4)

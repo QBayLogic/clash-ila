@@ -361,7 +361,8 @@ pub enum PredicateEventResponse {
     /// Close the program
     QuitProgram,
     /// Return to the main menu and display a message in the log
-    MainMenu(String),
+    /// The bool indicates wether or not changes to the ILA configuration have been made
+    MainMenu((String, bool)),
     /// Do nothing, remain in the predicate UI
     Nothing,
 }
@@ -539,7 +540,7 @@ impl<'a> State<'_> {
             Event::Key(KeyEvent {
                 code: KeyCode::Esc, ..
             }) => {
-                return PredicateEventResponse::MainMenu("Cancelled changes".into());
+                return PredicateEventResponse::MainMenu(("Cancelled changes".into(), false));
             }
             Event::Key(KeyEvent {
                 code: KeyCode::Enter,
@@ -619,8 +620,8 @@ impl<'a> State<'_> {
                 };
 
                 let response = match predicate.update_ila(medium, ila) {
-                    Ok(_) => "Succesfully updated predicate state".into(),
-                    Err(err) => format!("Failed to update ILA with error {err}"),
+                    Ok(_) => ("Succesfully updated predicate state".into(), true),
+                    Err(err) => (format!("Failed to update ILA with error {err}"), false),
                 };
 
                 return PredicateEventResponse::MainMenu(response);

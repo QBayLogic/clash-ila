@@ -105,7 +105,7 @@ impl ParseSubcommand for TuiArgs {
             },
         }
 
-        let Ok(mut session) = tui::TuiSession::new(&config) else {
+        let Ok(mut session) = tui::TuiSession::new(&config, &self.port) else {
             return;
         };
         session.main_loop(tx_port);
