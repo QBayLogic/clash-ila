@@ -111,7 +111,7 @@ data IlaConfig dom where
     -- ^ The hash of the ILA, is used to check if the computer is talking to the right ILA
     , tracing :: Signal dom a
     -- ^ The signal being sampled from
-    , triggers :: Vec m (Predicate a)
+    , predicates :: Vec m (Predicate a)
     -- ^ A list of predicates, used to control trigger/capture logic
     } ->
     IlaConfig dom
@@ -137,7 +137,7 @@ data WithIlaConfig a where
     -- ^ How many samples *after* triggering it will continue to sample
     , bufferDepth :: SNat n
     -- ^ The amount of samples that can be stored in the buffer
-    , triggers :: Vec m (NamedPredicate a)
+    , predicates :: Vec m (NamedPredicate a)
     -- ^ A list of predicates, used to control trigger/capture logic
     } ->
     WithIlaConfig a
@@ -166,16 +166,16 @@ instance
     (Vec n GenSignal, Signal dom a) ->
     WithIlaConfig a ->
     IlaConfig dom
-  ilaProbe (signalInfos, tracing) (WithIlaConfig @_ @_ @_ toplevel triggerPoint bufferDepth triggers) =
+  ilaProbe (signalInfos, tracing) (WithIlaConfig @_ @_ @_ toplevel triggerPoint bufferDepth predicates) =
     IlaConfig
       { depth = bufferDepth
       , triggerPoint = triggerPoint
       , hash = ilaHash
       , tracing = tracing
-      , triggers = fst <$> triggers
+      , predicates = fst <$> predicates
       }
    where
-    ilaHash = writeSignalInfo toplevel bufferDepth (fromGenSignal <$> signalInfos) (snd <$> triggers)
+    ilaHash = writeSignalInfo toplevel bufferDepth (fromGenSignal <$> signalInfos) (snd <$> predicates)
 
 {- | General case
 For every pair of new set of `(Signal dom a, "name")`, bundle the signal and collect the name

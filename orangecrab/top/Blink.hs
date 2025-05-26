@@ -80,7 +80,7 @@ topLogicUart baud btns rx = go
         { bufferDepth=d100
         , name="demo"
         , triggerPoint=0
-        , triggers=ilaDefaultPredicates
+        , predicates=ilaDefaultPredicates
         }
   txBit = snd $ demoIla (rx, (pure ()))
 
