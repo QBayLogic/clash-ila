@@ -129,7 +129,7 @@ ilaBufferManager ::
   -- | The specific word associated with the requested address, if the current cycle is a read cycle
   -- it will return `0` instead.
   Signal dom (BitVector 32)
-ilaBufferManager buffer incoming = bufferData
+ilaBufferManager buffer incoming = returnData
  where
   -- \| Returns the index and word index of the current address provided
   getBufferIndex ::
@@ -141,11 +141,13 @@ ilaBufferManager buffer incoming = bufferData
       (unpack $ resize bIndex, unpack $ resize wIndex)
   (bufferIndex, wordIndex) = unbundle $ getBufferIndex <$> incoming
 
+  (bufferData, _bufferLength) = buffer bufferIndex
+
   -- \| If in a read cycle, it will contain the output of the buffer, otherwise it will return 0
-  bufferData =
+  returnData =
     mux
       (not . writeEnable <$> incoming .&&. compareAddrRange 0x3000_0000 0x3fff_ffff incoming)
-      (liftA2 (getWord @32) (fst $ buffer bufferIndex) wordIndex)
+      (liftA2 (getWord @32) bufferData wordIndex)
       (pure 0)
 
 -- | Defines how the ILA should treat the trigger select registers
@@ -173,20 +175,22 @@ from the outside.
 A lot of the register map is also exposed as a memory map, with the following layout:
 |   Address   | Bus Select |      Description      |  Operation  |
 |-------------|------------|-----------------------|-------------|
-| 0x0000_0000 | 0b0001     | Capture               | ReadWrite   |
+| 0x0000_0000 | 0b0001     | Capture               | Read        |
 | 0x0000_0000 | 0b0010     | Trigger reset         | ReadWrite'1 |
 | 0x0000_0001 | 0b1111     | Trigger point         | ReadWrite   |
 | 0x0000_0002 | 0b1111     | ILA hash              | Read        |
-| 0x0000_0003 | 0b0001     | ILA trigger operation | ReadWrite'2 |
-| 0x0000_0004 | 0b1111     | ILA trigger select 0  | ReadWrite'3 |
-| 0x0000_0005 | 0b1111     | ILA trigger select 1  | ReadWrite'3 |
+| 0x0000_0003 | 0b0001     | ILA trigger operation | ReadWrite   |
+| 0x0000_0004 | 0b1111     | ILA trigger select    | ReadWrite'2 |
+| 0x0000_0005 | 0b0001     | ILA capture operation | ReadWrite   |
+| 0x0000_0006 | 0b1111     | ILA capture select    | ReadWrite'2 |
 | 0x1000_0000 | 0b1111     | ILA trigger mask      | ReadWrite   |
 | 0x1100_0000 | 0b1111     | ILA trigger compare   | ReadWrite   |
+| 0x2000_0000 | 0b1111     | ILA capture mask      | ReadWrite   |
+| 0x2100_0000 | 0b1111     | ILA capture compare   | ReadWrite   |
 | 0x3000_0000 | 0b1111     | Buffer samples        | Read        |
 
 '1: Reading from this address will return wether or not the ILA has been triggered or not
-'2: Trigger operation is either AND if thre first bit is set, otherwise OR is assumed
-'3: Each bit is for one trigger
+'2: Each bit is for one predicate
 -}
 data IlaRM bitSizeA depth n = IlaRM
   { capture :: Bool
@@ -209,6 +213,14 @@ data IlaRM bitSizeA depth n = IlaRM
   -- ^ The mask given to the trigger predicate
   , triggerCompare :: BitVector bitSizeA
   -- ^ The compare value given to the trigger predicate
+  , captureSelect :: BitVector 32
+  -- ^ Which capture predicate to use
+  , captureOperation :: IlaPredicateOperation
+  -- ^ How the ILA treats the capture predicates in combination with `captureSelect` bits
+  , captureMask :: BitVector bitSizeA
+  -- ^ The mask given to the capture predicate
+  , captureCompare :: BitVector bitSizeA
+  -- ^ The compare value given to the capture predicate
   }
   deriving (Generic, NFDataX, Show)
 
@@ -236,15 +248,21 @@ readIlaMM ::
   -- | Associated value with the address and bus select, `Nothing` if there is none
   Maybe (BitVector 32)
 readIlaMM 0x0000_0000 0b0001 rm = Just . extend $ pack rm.capture
-readIlaMM 0x0000_0000 0b0010 rm = Just . extend $ pack rm.triggered
+readIlaMM 0x0000_0000 0b0010 rm = Just . extend . pack $ not rm.shouldSample
 readIlaMM 0x0000_0001 0b1111 rm = Just . resize $ pack rm.triggerPoint
 readIlaMM 0x0000_0003 0b0001 rm = Just . resize $ pack rm.triggerOperation
 readIlaMM 0x0000_0004 0b1111 rm = Just rm.triggerSelect
+readIlaMM 0x0000_0005 0b0001 rm = Just . resize $ pack rm.captureOperation
+readIlaMM 0x0000_0006 0b1111 rm = Just rm.captureSelect
 readIlaMM address 0b1111 rm
   | testBits address 0x1000_0000 0xff00_0000 =
       Just $ getWord rm.triggerMask index
   | testBits address 0x1100_0000 0xff00_0000 =
       Just $ getWord rm.triggerCompare index
+  | testBits address 0x2000_0000 0xff00_0000 =
+      Just $ getWord rm.captureMask index
+  | testBits address 0x2100_0000 0xff00_0000 =
+      Just $ getWord rm.captureCompare index
  where
   index = unpack . resize $ address .&. 0x00ff_ffff
 readIlaMM _ _ _ = Nothing
@@ -260,7 +278,7 @@ testBits ::
   a ->
   -- | True is the bits match
   Bool
-testBits value ref msk = value .&. msk == ref
+testBits value ref msk = (value .&. msk) == ref
 
 {- | Certain registers trigger 'actions' rather than save a value, this enum allows the ILA to
 properly respond to those requests
@@ -294,11 +312,17 @@ writeIlaMM 0x0000_0000 0b0010 _write rm = (rm{triggered = False}, ResetTrigger)
 writeIlaMM 0x0000_0001 0b1111 write rm = (rm{triggerPoint = unpack $ resize write}, None)
 writeIlaMM 0x0000_0003 0b0001 write rm = (rm{triggerOperation = unpack $ resize write}, None)
 writeIlaMM 0x0000_0004 0b1111 write rm = (rm{triggerSelect = write}, None)
+writeIlaMM 0x0000_0005 0b0001 write rm = (rm{captureOperation = unpack $ resize write}, None)
+writeIlaMM 0x0000_0006 0b1111 write rm = (rm{captureSelect = write}, None)
 writeIlaMM address 0b1111 write rm
   | testBits address 0x1000_0000 0xff00_0000 =
       (rm{triggerMask = setWord rm.triggerMask index write}, None)
   | testBits address 0x1100_0000 0xff00_0000 =
       (rm{triggerCompare = setWord rm.triggerCompare index write}, None)
+  | testBits address 0x2000_0000 0xff00_0000 =
+      (rm{captureMask = setWord rm.captureMask index write}, None)
+  | testBits address 0x2100_0000 0xff00_0000 =
+      (rm{captureCompare = setWord rm.captureCompare index write}, None)
  where
   -- We use 32 bit words, the indices incrementing writes receive is on a byte basis
   -- To correct for this, we can simply shift right by 2 (dividing by 4)
@@ -320,7 +344,7 @@ ilaWb ::
   Circuit
     (Wishbone dom Standard 32 (BitVector 32))
     ()
-ilaWb (IlaConfig @_ @a @depth @m depth initTriggerPoint ilaHash tracing triggers captureSignal) = Circuit exposeIn
+ilaWb (IlaConfig @_ @a @depth @m depth initTriggerPoint ilaHash tracing predicates) = Circuit exposeIn
  where
   exposeIn (fwdM2S, _) = out
    where
@@ -331,12 +355,16 @@ ilaWb (IlaConfig @_ @a @depth @m depth initTriggerPoint ilaHash tracing triggers
         { capture = False
         , triggered = False
         , triggerPoint = initTriggerPoint
-        , shouldSample = True
+        , shouldSample = False
         , sampledAfterTrigger = 0
         , triggerOperation = PredicateOR
         , triggerSelect = minBound
         , triggerMask = maxBound
-        , triggerCompare = 0 -- TODO: make this selectable by user
+        , triggerCompare = 0
+        , captureOperation = PredicateOR
+        , captureSelect = minBound
+        , captureMask = maxBound
+        , captureCompare = 0
         }
 
     -- \| Update parts of the RM which aren't depending on input from WB
@@ -360,27 +388,40 @@ ilaWb (IlaConfig @_ @a @depth @m depth initTriggerPoint ilaHash tracing triggers
     -- \| Selects the right predicate and applies it on incoming sample
     doesTrigger :: IlaRM (BitSize a) depth m -> a -> Bool
     doesTrigger rm currentSample =
-      -- ilaPredicateEq currentSample rm.triggerCompare rm.triggerMask
-      predicateOperation rm.triggerOperation $
-        zipWith
-          (predicateUnselectedDefault rm.triggerOperation)
-          (reverse . unpack $ resize rm.triggerSelect)
-          ((\trigger -> trigger currentSample rm.triggerCompare rm.triggerMask) <$> triggers)
+      rm.capture -- If capture is disabled, don't bother with testing predicates
+        && ( predicateOperation rm.triggerOperation
+              $ zipWith
+                (predicateUnselectedDefault rm.triggerOperation)
+                (reverse . unpack $ resize rm.triggerSelect)
+                ((\predicate -> predicate currentSample rm.triggerCompare rm.triggerMask) <$> predicates)
+           )
+
+    -- \| Selects the right predicate and applies it on incoming sample
+    captureActive :: IlaRM (BitSize a) depth m -> a -> Bool
+    captureActive rm currentSample =
+      predicateOperation rm.captureOperation
+        $ zipWith
+          (predicateUnselectedDefault rm.captureOperation)
+          (reverse . unpack $ resize rm.captureSelect)
+          ((\predicate -> predicate currentSample rm.captureCompare rm.captureMask) <$> predicates)
 
     -- \| Handle WB writes and update the memory map accordingly,
     (ilaRM, ilaAction) =
-      unbundle $
-        moore
-          ( \(oldMM, _) (wb, currentSample, capture) ->
-              if inWbCycle' wb && wb.writeEnable
+      unbundle
+        $ moore
+          ( \(oldMM, _) (wb, currentSample) ->
+              if wb.strobe && wb.busCycle && wb.writeEnable
                 then
-                  writeIlaMM wb.addr wb.busSelect wb.writeData $
-                    updateRM (doesTrigger oldMM currentSample) capture oldMM
-                else (updateRM (doesTrigger oldMM currentSample) capture oldMM, None)
+                  writeIlaMM wb.addr wb.busSelect wb.writeData
+                    $ updateRM (doesTrigger oldMM currentSample) (captureActive oldMM currentSample) oldMM
+                else
+                  ( updateRM (doesTrigger oldMM currentSample) (captureActive oldMM currentSample) oldMM
+                  , None
+                  )
           )
           id
           (initRM, None)
-          (bundle (fwdM2S, tracing, captureSignal))
+          (bundle (fwdM2S, tracing))
 
     -- \| The output from the ILA's internal buffer
     bufferOutput =
@@ -415,7 +456,11 @@ ilaWb (IlaConfig @_ @a @depth @m depth initTriggerPoint ilaHash tracing triggers
             Nothing
               | rm.shouldSample -> 0
               | otherwise -> bufValue
-    readManager = liftA3 readManager' fwdM2S ilaRM bufferOutput
+    readManager =
+      mux
+        ((\fwd -> fwd.busCycle && fwd.strobe && (not fwd.writeEnable)) <$> fwdM2S)
+        (liftA3 readManager' fwdM2S ilaRM bufferOutput)
+        (pure maxBound)
 
     -- \| Generates the wishbone reply
     reply ::
@@ -435,7 +480,9 @@ ilaWb (IlaConfig @_ @a @depth @m depth initTriggerPoint ilaHash tracing triggers
         }
 
     -- \| The first clock cycle shouldn't ack according to wishbone
-    delayedAck = inWbCycle fwdM2S .&&. (register False $ inWbCycle fwdM2S)
+    delayedAck = inWbCycle <$> fwdM2S .&&. (register False $ inWbCycle <$> fwdM2S)
+     where
+      inWbCycle fwd = fwd.strobe && fwd.busCycle
 
     -- Writes are done in one clock cycle, but wishbone timing requires us to delay it by one clock cycle
     out =

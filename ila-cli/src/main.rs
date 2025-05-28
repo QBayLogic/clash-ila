@@ -1,18 +1,17 @@
 use std::io::{Read, Write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use clap::{Args, Parser, Subcommand};
 use communication::{perform_register_operation, IlaRegisters, RegisterOutput};
 use serialport::SerialPort;
-use vcd::write_to_vcd;
-use wishbone::WbTransaction;
 
 mod communication;
 mod config;
 mod tui;
 mod vcd;
 mod wishbone;
+mod predicates;
 mod predicates_tui;
 mod ui;
 
@@ -92,7 +91,7 @@ impl ParseSubcommand for TuiArgs {
     fn parse(self) {
         let mut tx_port = find_specified_port(&self.port, self.baud);
         let config = config::read_config(&self.config)
-            .expect(&format!("File at {:?} contained errors", &self.config));
+            .unwrap_or_else(|_| panic!("File at {:?} contained errors", &self.config));
 
         match perform_register_operation(&mut tx_port, &config, &IlaRegisters::Hash(config.hash)) {
             Ok(RegisterOutput::Hash(true)) => {},
@@ -106,7 +105,7 @@ impl ParseSubcommand for TuiArgs {
             },
         }
 
-        let Ok(mut session) = tui::TuiSession::new(&config) else {
+        let Ok(mut session) = tui::TuiSession::new(&config, &self.port) else {
             return;
         };
         session.main_loop(tx_port);
@@ -121,7 +120,7 @@ impl ParseSubcommand for TuiArgs {
 /// # Panics
 ///
 /// Panics if the user provided an incorrect path or other IO errors accure
-fn find_specified_port(check: &PathBuf, baud: u32) -> Box<dyn SerialPort> {
+fn find_specified_port(check: &Path, baud: u32) -> Box<dyn SerialPort> {
     let ports = match serialport::available_ports() {
         Ok(ports) => ports,
         Err(err) => {
@@ -171,7 +170,7 @@ fn monitor_port(port: Box<dyn SerialPort>, args: MonitorArgs) {
         }
         if wrote == args.max_per_line {
             wrote = 0;
-            println!(""); // Using ln rather than \n to keep cross-compatibility
+            println!(); // Using ln rather than \n to keep cross-compatibility
         }
 
         // If we can't flush, we can try again next byte
@@ -201,7 +200,6 @@ fn main() {
             for port in ports {
                 println!("\t{}", port.port_name);
             }
-            return;
         }
     }
 }

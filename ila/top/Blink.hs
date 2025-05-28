@@ -77,11 +77,10 @@ topLogicUart baud btns rx = go
       (counter1, "c1")
       (counter2, "c2")
       WithIlaConfig
-        { bufferDepth=d10
-        , name="himom"
+        { bufferDepth=d100
+        , name="demo"
         , triggerPoint=0
-        , triggers=ilaDefaultPredicates
-        , capture=pure True
+        , predicates=ilaDefaultPredicates
         }
   txBit = snd $ demoIla (rx, (pure ()))
 

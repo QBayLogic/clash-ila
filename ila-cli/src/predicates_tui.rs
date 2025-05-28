@@ -4,8 +4,9 @@ use std::{
 };
 
 use crate::{
-    communication::{IlaPredicate, PredicateOperation, PredicateTarget, Signal, SignalCluster},
+    communication::{Signal, SignalCluster},
     config::{IlaConfig, IlaSignal},
+    predicates::{IlaPredicate, PredicateOperation, PredicateTarget},
     ui::textinput::TextPromptState,
 };
 use bitvec::{
@@ -44,6 +45,7 @@ trait PredicatePage {
 ///
 /// This is indicates by the prefix of the number, if the number has no prefix it is assumed to be
 /// base-10 (Decimal)
+#[derive(Debug, Clone, Copy)]
 enum NumericState {
     Decimal,
     Hex,
@@ -68,10 +70,7 @@ impl NumericState {
 
     /// If this `NumericState` has a prefix to identify itself within a string
     fn has_prefix(&self) -> bool {
-        match self {
-            NumericState::Decimal => false,
-            _ => true,
-        }
+        !matches!(self, NumericState::Decimal)
     }
 
     /// Attempt to parse the number into a `BigUint` based on the `NumericState`
@@ -91,7 +90,7 @@ impl NumericState {
     fn immediate_parse(str: &str) -> Result<BigUint, ParseBigIntError> {
         let state = Self::new(str);
         let non_prefix = match state.has_prefix() {
-            true => str.get(2..).unwrap_or(""),
+            true => str.get(2..).unwrap_or_default(),
             false => str,
         };
 
@@ -110,6 +109,7 @@ impl PredicatePage for GeneralPage {
         let layout = Layout::new(
             ratatui::layout::Direction::Vertical,
             [
+                Constraint::Length(1),
                 Constraint::Length(2),
                 Constraint::Length(1),
                 Constraint::Length(3),
@@ -122,15 +122,22 @@ impl PredicatePage for GeneralPage {
         .split(area);
 
         f.render_widget("General predicate settings".bold(), layout[0]);
+        f.render_widget(
+            match state.target {
+                PredicateTarget::Trigger => "The general predicates page for trigger configuration",
+                PredicateTarget::Capture => "The general predicates page for capture configuration",
+            },
+            layout[1],
+        );
 
-        f.render_widget("Predicate operation", layout[1]);
+        f.render_widget("Predicate operation", layout[2]);
         state
             .predicate_op_ui_state
-            .render_ref(layout[2], f.buffer_mut());
-        f.render_widget("Predicate Selector", layout[3]);
+            .render_ref(layout[3], f.buffer_mut());
+        f.render_widget("Predicate Selector", layout[4]);
         state
             .predicate_select_ui_state
-            .render_ref(layout[4], f.buffer_mut());
+            .render_ref(layout[5], f.buffer_mut());
     }
 
     fn navigate(&self, state: &mut State, event: &Event) {
@@ -355,7 +362,8 @@ pub enum PredicateEventResponse {
     /// Close the program
     QuitProgram,
     /// Return to the main menu and display a message in the log
-    MainMenu(String),
+    /// The bool indicates wether or not changes to the ILA configuration have been made
+    MainMenu((String, bool)),
     /// Do nothing, remain in the predicate UI
     Nothing,
 }
@@ -374,6 +382,8 @@ pub struct State<'a> {
     tab: Tab,
     /// The current option selected in the general page
     selected: Selected,
+    /// The predicate target
+    target: PredicateTarget,
     /// The state for the predicate operation
     predicate_op_ui_state: Listbox,
     /// The state for the predicate select
@@ -388,7 +398,7 @@ pub struct State<'a> {
     compare_state: Vec<TextPromptState<()>>,
 }
 
-impl<'a> State<'_> {
+impl State<'_> {
     /// Create a new predicates configuration interface
     ///
     /// An initial `IlaPredicate` configuration has to be provided to set the initial values within
@@ -414,7 +424,7 @@ impl<'a> State<'_> {
                 .filter_map(|signal| {
                     signal
                         .samples
-                        .get(0)
+                        .first()
                         .map(|sample| (bitvec_to_words(sample), signal.width))
                 })
                 .map(|(v, width)| {
@@ -433,6 +443,7 @@ impl<'a> State<'_> {
         State {
             tab: Tab::General(GeneralPage),
             selected: Selected::Operation,
+            target: predicate.target,
             predicate_op_ui_state: {
                 let mut list = Listbox::new(vec!["AND", "OR"], predicate.operation as usize);
                 list.set_focus(true);
@@ -530,7 +541,7 @@ impl<'a> State<'_> {
             Event::Key(KeyEvent {
                 code: KeyCode::Esc, ..
             }) => {
-                return PredicateEventResponse::MainMenu("Cancelled changes".into());
+                return PredicateEventResponse::MainMenu(("Cancelled changes".into(), false));
             }
             Event::Key(KeyEvent {
                 code: KeyCode::Enter,
@@ -596,7 +607,7 @@ impl<'a> State<'_> {
                 };
 
                 let predicate = IlaPredicate {
-                    target: PredicateTarget::Trigger,
+                    target: self.target,
                     operation,
                     predicate_select: selected,
                     mask: SignalCluster {
@@ -610,8 +621,8 @@ impl<'a> State<'_> {
                 };
 
                 let response = match predicate.update_ila(medium, ila) {
-                    Ok(_) => "Succesfully updated predicate state".into(),
-                    Err(err) => format!("Failed to update ILA with error {err}"),
+                    Ok(_) => ("Succesfully updated predicate state".into(), true),
+                    Err(err) => (format!("Failed to update ILA with error {err}"), false),
                 };
 
                 return PredicateEventResponse::MainMenu(response);

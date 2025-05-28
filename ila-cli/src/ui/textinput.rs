@@ -31,7 +31,7 @@ where
     where
         S: Into<String>,
     {
-        let def = default.map(|s| s.into()).unwrap_or(String::new());
+        let def = default.map(|s| s.into()).unwrap_or_default();
         let len = def.len();
         TextPromptState {
             input: def,
