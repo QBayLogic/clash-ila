@@ -45,6 +45,7 @@ trait PredicatePage {
 ///
 /// This is indicates by the prefix of the number, if the number has no prefix it is assumed to be
 /// base-10 (Decimal)
+#[derive(Debug, Clone, Copy)]
 enum NumericState {
     Decimal,
     Hex,
@@ -69,7 +70,7 @@ impl NumericState {
 
     /// If this `NumericState` has a prefix to identify itself within a string
     fn has_prefix(&self) -> bool {
-        matches!(self, NumericState::Decimal)
+        !matches!(self, NumericState::Decimal)
     }
 
     /// Attempt to parse the number into a `BigUint` based on the `NumericState`
