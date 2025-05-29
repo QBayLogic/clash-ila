@@ -121,7 +121,7 @@ impl SignalCluster {
 #[allow(unused)]
 pub enum IlaRegisters {
     /// Register controlling wether or not to capture samples
-    Capture(bool),
+    Capture,
     /// Register re-arming the trigger (and clear the buffer)
     TriggerReset,
     /// Checks the ILA for it's triggered status
@@ -152,8 +152,10 @@ pub enum IlaRegisters {
 }
 
 /// Output of the register whenever a read operation is performed on the ILA.
+#[allow(unused)]
 pub enum RegisterOutput {
     None,
+    Capture(bool),
     TriggerState(bool),
     BufferContent(SignalCluster),
     TriggerMask(SignalCluster),
@@ -171,7 +173,7 @@ impl IlaRegisters {
     /// Get the address and byte select for a specific register
     pub fn address(&self) -> (u32, [bool; 4]) {
         match self {
-            IlaRegisters::Capture(_) => (0x0000_0000, [false, false, false, true]),
+            IlaRegisters::Capture => (0x0000_0000, [false, false, false, true]),
             IlaRegisters::TriggerState => (0x0000_0000, [false, false, true, false]),
             IlaRegisters::TriggerReset => (0x0000_0000, [false, false, true, false]),
             IlaRegisters::TriggerPoint(_) => (0x0000_0001, [true; 4]),
@@ -194,7 +196,7 @@ impl IlaRegisters {
     /// read was attempted from
     pub fn translate_output(&self, ila: &IlaConfig, output: &[u32]) -> RegisterOutput {
         match self {
-            IlaRegisters::Capture(_) => RegisterOutput::None,
+            IlaRegisters::Capture => RegisterOutput::Capture(matches!(output.first(), Some(1))),
             IlaRegisters::Buffer(_) => {
                 RegisterOutput::BufferContent(SignalCluster::from_data(ila, output))
             }
@@ -256,8 +258,8 @@ impl IlaRegisters {
     pub fn to_wb_transaction(&self, ila: &IlaConfig) -> WbTransaction {
         let (addr, byte_select) = self.address();
         match self {
-            IlaRegisters::Capture(capture) => {
-                WbTransaction::new_writes(byte_select, addr, vec![*capture as u32])
+            IlaRegisters::Capture => {
+                WbTransaction::new_reads(byte_select, addr, vec![0])
             }
             IlaRegisters::TriggerState => WbTransaction::new_reads(byte_select, addr, vec![0]),
             IlaRegisters::TriggerReset => WbTransaction::new_writes(byte_select, addr, vec![1]),
