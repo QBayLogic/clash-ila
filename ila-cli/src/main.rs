@@ -2,18 +2,20 @@ use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use clap::{Args, Parser, Subcommand};
+use clap::{arg, Args, Parser, Subcommand};
+use cli::{RegisterArgs, ParseSubcommand};
 use communication::{perform_register_operation, IlaRegisters, RegisterOutput};
 use serialport::SerialPort;
 
 mod communication;
 mod config;
-mod tui;
-mod vcd;
-mod wishbone;
 mod predicates;
 mod predicates_tui;
+mod tui;
 mod ui;
+mod vcd;
+mod wishbone;
+mod cli;
 
 #[derive(Parser, Debug)]
 #[command(version, about)]
@@ -31,6 +33,8 @@ enum Subcommands {
     Monitor(MonitorArgs),
     /// Lists all serial ports available
     List,
+    /// Communicate directly communicate with the ILA by writing to registers
+    Register(RegisterArgs),
 }
 
 #[derive(Args, Debug)]
@@ -75,11 +79,6 @@ struct TuiArgs {
     baud: u32,
 }
 
-/// Simple trait to indicate this is a valid subcommand with arguments
-trait ParseSubcommand {
-    fn parse(self);
-}
-
 impl ParseSubcommand for MonitorArgs {
     fn parse(self) {
         let port = find_specified_port(&self.port, self.baud);
@@ -94,15 +93,15 @@ impl ParseSubcommand for TuiArgs {
             .unwrap_or_else(|_| panic!("File at {:?} contained errors", &self.config));
 
         match perform_register_operation(&mut tx_port, &config, &IlaRegisters::Hash(config.hash)) {
-            Ok(RegisterOutput::Hash(true)) => {},
+            Ok(RegisterOutput::Hash(true)) => {}
             Ok(_) => {
                 println!("Provided config hash and ILA hash do not match!");
                 return;
-            },
+            }
             Err(err) => {
                 println!("Failed to send ILA: {err}");
                 panic!("Failed to check for the ILA hash");
-            },
+            }
         }
 
         let Ok(mut session) = tui::TuiSession::new(&config, &self.port) else {
@@ -185,6 +184,7 @@ fn main() {
     match cli.command {
         Subcommands::Monitor(args) => args.parse(),
         Subcommands::Tui(args) => args.parse(),
+        Subcommands::Register(register_args) => args.parse(),
         Subcommands::List => {
             let ports = match serialport::available_ports() {
                 Ok(ports) => ports,
