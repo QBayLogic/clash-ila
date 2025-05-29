@@ -1,9 +1,11 @@
+use crate::cli::CommandOutput;
 use crate::config::IlaConfig;
 use crate::predicates::PredicateOperation;
 use crate::wishbone::WbTransaction;
 use bitvec::prelude::{BitVec, Msb0};
 use bitvec::slice::BitSlice;
 use bitvec::view::BitView;
+use num::BigUint;
 use std::io::{Read as IoRead, Result as IoResult, Write as IoWrite};
 use std::time::Duration;
 
@@ -24,6 +26,22 @@ pub struct Signal {
     pub samples: Vec<BitVec<u8, Msb0>>,
 }
 
+impl CommandOutput for Signal {
+    fn command_output(&self) -> String {
+        let mut output: String = self
+            .samples
+            .iter()
+            .map(|sample| {
+                let mut num = BigUint::from_bytes_be(&sample.clone().into_vec()).to_string();
+                num.push(',');
+                num
+            })
+            .collect();
+        output.pop();
+        output
+    }
+}
+
 /// A packet of several signals which all got sent at once
 ///
 /// This should be considered as 'all signals being monitored by the ILA in one timeframe'
@@ -32,6 +50,22 @@ pub struct Signal {
 pub struct SignalCluster {
     pub cluster: Vec<Signal>,
     pub timestamp: Duration,
+}
+
+impl CommandOutput for SignalCluster {
+    fn command_output(&self) -> String {
+        let mut output: String = self
+            .cluster
+            .iter()
+            .map(|signal| {
+                let mut signal = signal.command_output();
+                signal.push(':');
+                signal
+            })
+            .collect();
+        output.pop();
+        output
+    }
 }
 
 impl SignalCluster {
@@ -153,6 +187,7 @@ pub enum IlaRegisters {
 
 /// Output of the register whenever a read operation is performed on the ILA.
 #[allow(unused)]
+#[derive(Debug, Clone)]
 pub enum RegisterOutput {
     None,
     Capture(bool),
@@ -167,6 +202,41 @@ pub enum RegisterOutput {
     CaptureCompare(SignalCluster),
     CaptureOp(PredicateOperation),
     CaptureSelect(u32),
+}
+
+impl CommandOutput for bool {
+    fn command_output(&self) -> String {
+        match self {
+            true => "true",
+            false => "false",
+        }.into()
+    }
+}
+
+impl CommandOutput for u32 {
+    fn command_output(&self) -> String {
+        self.to_string()
+    }
+}
+
+impl CommandOutput for RegisterOutput {
+    fn command_output(&self) -> String {
+        match self {
+            RegisterOutput::None => String::new(),
+            RegisterOutput::Capture(state) => state.command_output(),
+            RegisterOutput::TriggerState(state) => state.command_output(),
+            RegisterOutput::BufferContent(signal_cluster) => signal_cluster.command_output(),
+            RegisterOutput::TriggerMask(signal_cluster) => signal_cluster.command_output(),
+            RegisterOutput::TriggerCompare(signal_cluster) => signal_cluster.command_output(),
+            RegisterOutput::TriggerOp(predicate_operation) => predicate_operation.command_output(),
+            RegisterOutput::TriggerSelect(select) => select.command_output(),
+            RegisterOutput::Hash(hash) => hash.command_output(),
+            RegisterOutput::CaptureMask(signal_cluster) => signal_cluster.command_output(),
+            RegisterOutput::CaptureCompare(signal_cluster) => signal_cluster.command_output(),
+            RegisterOutput::CaptureOp(predicate_operation) => predicate_operation.command_output(),
+            RegisterOutput::CaptureSelect(select) => select.command_output(),
+        }
+    }
 }
 
 impl IlaRegisters {
@@ -258,9 +328,7 @@ impl IlaRegisters {
     pub fn to_wb_transaction(&self, ila: &IlaConfig) -> WbTransaction {
         let (addr, byte_select) = self.address();
         match self {
-            IlaRegisters::Capture => {
-                WbTransaction::new_reads(byte_select, addr, vec![0])
-            }
+            IlaRegisters::Capture => WbTransaction::new_reads(byte_select, addr, vec![0]),
             IlaRegisters::TriggerState => WbTransaction::new_reads(byte_select, addr, vec![0]),
             IlaRegisters::TriggerReset => WbTransaction::new_writes(byte_select, addr, vec![1]),
             IlaRegisters::TriggerPoint(trig_point) => {

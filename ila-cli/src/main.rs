@@ -1,10 +1,10 @@
 use std::io::{Read, Write};
-use std::path::{Path, PathBuf};
-use std::time::Duration;
+use std::path::PathBuf;
 
 use clap::{arg, Args, Parser, Subcommand};
-use cli::{RegisterArgs, ParseSubcommand};
+use cli::{RegisterArgs, ParseSubcommand, find_specified_port};
 use communication::{perform_register_operation, IlaRegisters, RegisterOutput};
+use config::ConfigMethod;
 use serialport::SerialPort;
 
 mod communication;
@@ -67,13 +67,8 @@ struct TuiArgs {
     #[arg(short, long, help = "Path to serial port to use")]
     port: PathBuf,
 
-    #[arg(
-        short = 'c',
-        long,
-        default_value = "ilaconf.json",
-        help = "Path to config file"
-    )]
-    config: PathBuf,
+    #[command(flatten)]
+    config: ConfigMethod,
 
     #[arg(short, long, default_value_t = 9600, help = "Sets baud rate")]
     baud: u32,
@@ -89,7 +84,7 @@ impl ParseSubcommand for MonitorArgs {
 impl ParseSubcommand for TuiArgs {
     fn parse(self) {
         let mut tx_port = find_specified_port(&self.port, self.baud);
-        let config = config::read_config(&self.config)
+        let config = self.config.get_config()
             .unwrap_or_else(|_| panic!("File at {:?} contained errors", &self.config));
 
         match perform_register_operation(&mut tx_port, &config, &IlaRegisters::Hash(config.hash)) {
@@ -109,38 +104,6 @@ impl ParseSubcommand for TuiArgs {
         };
         session.main_loop(tx_port);
     }
-}
-
-/// Check if an user given port path is valid and readable, intended to be used within a CLI-like
-/// context
-///
-/// Returns a readable serial port on success
-///
-/// # Panics
-///
-/// Panics if the user provided an incorrect path or other IO errors accure
-fn find_specified_port(check: &Path, baud: u32) -> Box<dyn SerialPort> {
-    let ports = match serialport::available_ports() {
-        Ok(ports) => ports,
-        Err(err) => {
-            println!("Unable to qeury serial port information;");
-            println!("Kind: {:?}", err.kind);
-            println!("Reason: {}", err.description);
-            panic!("Unable to query serial port information.")
-        }
-    };
-
-    let check_path = check.display().to_string();
-
-    let valid_port = ports
-        .into_iter()
-        .find(|port| port.port_name == check_path)
-        .expect("Provided path is not a valid serial port.");
-
-    serialport::new(valid_port.port_name, baud)
-        .timeout(Duration::from_secs(1))
-        .open()
-        .expect("Unable to open serial port (maybe busy?)")
 }
 
 /// `monitor` CLI handler
@@ -184,7 +147,7 @@ fn main() {
     match cli.command {
         Subcommands::Monitor(args) => args.parse(),
         Subcommands::Tui(args) => args.parse(),
-        Subcommands::Register(register_args) => args.parse(),
+        Subcommands::Register(args) => args.parse(),
         Subcommands::List => {
             let ports = match serialport::available_ports() {
                 Ok(ports) => ports,

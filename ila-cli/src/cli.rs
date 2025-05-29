@@ -1,12 +1,15 @@
 use std::any::Any;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use std::time::Duration;
 
-use crate::communication::{IlaRegisters, ReadWrite};
+use crate::communication::{perform_register_operation, IlaRegisters, ReadWrite};
+use crate::config::{self, ConfigMethod};
 use crate::predicates::PredicateOperation;
 use crate::predicates_tui::NumericState;
 use clap::builder::{TypedValueParser, ValueParserFactory};
 use clap::error::ErrorKind;
 use clap::{arg, Arg, Args, Command, Error, FromArgMatches, Subcommand};
+use serialport::SerialPort;
 
 /// A macro for generating 'Parser' variants for 'Container' types used by Clap
 ///
@@ -74,7 +77,6 @@ trait ArgumentType {
     fn description(is_rd: IsRW) -> &'static str;
 }
 
-
 /// A simple enum indicating if something is either a `IsRW::Read` or a `IsRW::Write`
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum IsRW {
@@ -108,7 +110,7 @@ impl TypedValueParser for FlagParser {
     ) -> Result<Self::Value, Error> {
         match value.to_str() {
             Some("true") => Ok(Flag(())),
-            _ => Err(Error::new(ErrorKind::InvalidValue))
+            _ => Err(Error::new(ErrorKind::InvalidValue)),
         }
     }
 }
@@ -334,7 +336,7 @@ enum RegisterSubcommand {
     Capture,
     /// Register re-arming the trigger (and clear the buffer)
     TriggerReset,
-    /// Checks the ILA for it's triggered status
+    /// Checks the ILA for its triggered status
     TriggerState,
     /// Register controlling how many samples it should store after triggering
     TriggerPoint(ReadWriteArgument<Unsupported, Word>),
@@ -348,8 +350,7 @@ enum RegisterSubcommand {
     TriggerSelect(ReadWriteArgument<Flag, Word>),
     /// Read out samples from the ILA buffer, each vector item is an index within the buffer
     Buffer(ReadWriteArgument<Indices, Unsupported>),
-    /// Read the hash of the ILA, can be used to check if the current instantiated ILA is
-    /// out-of-date
+    /// Compare the hash value within the ILA with the value provided
     Hash(ReadWriteArgument<Word, Unsupported>),
     /// The value to mask samples before being fed to the capture predicates
     CaptureMask(ReadWriteArgument<Word, ByteStream>),
@@ -448,19 +449,46 @@ impl From<RegisterSubcommand> for IlaRegisters {
     }
 }
 
+/// Check if an user given port path is valid and readable, intended to be used within a CLI-like
+/// context
+///
+/// Returns a readable serial port on success
+///
+/// # Panics
+///
+/// Panics if the user provided an incorrect path or other IO errors accure
+pub fn find_specified_port(check: &Path, baud: u32) -> Box<dyn SerialPort> {
+    let ports = match serialport::available_ports() {
+        Ok(ports) => ports,
+        Err(err) => {
+            println!("Unable to qeury serial port information;");
+            println!("Kind: {:?}", err.kind);
+            println!("Reason: {}", err.description);
+            panic!("Unable to query serial port information.")
+        }
+    };
+
+    let check_path = check.display().to_string();
+
+    let valid_port = ports
+        .into_iter()
+        .find(|port| port.port_name == check_path)
+        .expect("Provided path is not a valid serial port.");
+
+    serialport::new(valid_port.port_name, baud)
+        .timeout(Duration::from_secs(1))
+        .open()
+        .expect("Unable to open serial port (maybe busy?)")
+}
+
+/// Implementing this trait implies the data type can be converted to a command line output
+pub trait CommandOutput {
+    fn command_output(&self) -> String;
+}
+
 /// Simple trait to indicate this is a valid subcommand with arguments
 pub trait ParseSubcommand {
     fn parse(self);
-}
-
-#[derive(Args, Debug)]
-#[group(required = true, multiple = false)]
-pub struct ConfigMethod {
-    #[arg(short, long, help = "The path leading to the ILA config file")]
-    file: Option<PathBuf>,
-
-    #[arg(short, long, help = "The contents of the ILA config file directly given as an argument")]
-    content: Option<String>,
 }
 
 #[derive(Args, Debug)]
@@ -480,7 +508,14 @@ pub struct RegisterArgs {
 
 impl ParseSubcommand for RegisterArgs {
     fn parse(self) {
-        todo!()
+        let mut tx_port = find_specified_port(&self.port, self.baud);
+        let config = self.config.get_config()
+            .unwrap_or_else(|_| panic!("File at {:?} contained errors", &self.config));
+
+        let output = perform_register_operation(&mut tx_port, &config, &self.register.into());
+        match output {
+            Ok(output) => println!("{}", output.command_output()),
+            Err(err) => panic!("{err}"),
+        }
     }
 }
-
