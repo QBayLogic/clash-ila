@@ -1,11 +1,14 @@
+use std::fmt::Display;
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
-use std::io::{Read, Write};
 
 use crate::communication::{perform_register_operation, IlaRegisters, RegisterOutput};
 use crate::config::ConfigMethod;
+use crate::export::ExportCluster;
 use crate::tui::TuiSession;
-use clap::{arg, Args};
+use crate::vcd::write_to_vcd;
+use clap::{arg, Args, ValueEnum};
 use serialport::SerialPort;
 
 use crate::cli_registers::RegisterSubcommand;
@@ -70,7 +73,9 @@ pub struct RegisterArgs {
 impl ParseSubcommand for RegisterArgs {
     fn parse(self) {
         let mut tx_port = find_specified_port(&self.port, self.baud);
-        let config = self.config.get_config()
+        let config = self
+            .config
+            .get_config()
             .unwrap_or_else(|_| panic!("File at {:?} contained errors", &self.config));
 
         let output = perform_register_operation(&mut tx_port, &config, &self.register.into());
@@ -78,6 +83,88 @@ impl ParseSubcommand for RegisterArgs {
             Ok(output) => println!("{}", output.command_output()),
             Err(err) => panic!("{err}"),
         }
+    }
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+enum ExportType {
+    Vcd,
+    Csv,
+    Json,
+}
+
+impl Display for ExportType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            ExportType::Vcd => "vcd",
+            ExportType::Csv => "csv",
+            ExportType::Json => "json",
+        })
+    }
+}
+
+#[derive(Args, Debug)]
+pub struct ExportArgs {
+    #[arg(short, long, help = "Path to serial port to use")]
+    port: PathBuf,
+
+    #[arg(short, long, default_value_t = 9600, help = "Sets baud rate")]
+    baud: u32,
+
+    #[command(flatten)]
+    config: ConfigMethod,
+
+    #[arg(short, long, help = "Name of the exported file")]
+    name: PathBuf,
+
+    #[arg(short, long, default_value_t = ExportType::Vcd, help = "What file format to export to")]
+    export: ExportType,
+}
+
+impl ParseSubcommand for ExportArgs {
+    fn parse(self) {
+        let mut tx_port = find_specified_port(&self.port, self.baud);
+        let config = self
+            .config
+            .get_config()
+            .unwrap_or_else(|_| panic!("File at {:?} contained errors", &self.config));
+
+        let indices: Vec<u32> = (0_u32..config.buffer_size as u32).collect();
+        let cluster = match perform_register_operation(
+            &mut tx_port,
+            &config,
+            &IlaRegisters::Buffer(indices),
+        ) {
+            Ok(RegisterOutput::BufferContent(cluster)) => cluster,
+            Ok(_) => panic!("Unexpected output when reading buffer"),
+            Err(err) => panic!("Error: {err}"),
+        };
+
+        match self.export {
+            ExportType::Vcd => write_to_vcd(&cluster, &config, self.name)
+                .expect("Unable to write to VCD file"),
+            ExportType::Csv => {
+                let export: ExportCluster = cluster.into();
+                let mut writer = csv::WriterBuilder::new()
+                    .from_path(self.name)
+                    .expect("Unable to open path to file");
+
+                for signal in export.signals {
+                    writer.serialize(signal)
+                        .expect("Unable to write signal to CSV file");
+                }
+
+                writer.flush()
+                    .expect("Unable to flush written data to CSV file");
+            },
+            ExportType::Json => {
+                let export: ExportCluster = cluster.into();
+                let serialized = serde_json::to_string(&export)
+                    .expect("Unable to serialize signals to JSON string");
+                std::fs::write(self.name, serialized)
+                    .expect("Unable to write serialized data to file");
+            },
+        };
     }
 }
 
@@ -128,7 +215,9 @@ pub struct TuiArgs {
 impl ParseSubcommand for TuiArgs {
     fn parse(self) {
         let mut tx_port = find_specified_port(&self.port, self.baud);
-        let config = self.config.get_config()
+        let config = self
+            .config
+            .get_config()
             .unwrap_or_else(|_| panic!("File at {:?} contained errors", &self.config));
 
         match perform_register_operation(&mut tx_port, &config, &IlaRegisters::Hash(config.hash)) {
@@ -184,5 +273,3 @@ pub fn monitor_port(port: Box<dyn SerialPort>, args: MonitorArgs) {
         let _ = std::io::stdout().flush();
     }
 }
-
-
