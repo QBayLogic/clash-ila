@@ -46,7 +46,7 @@ trait PredicatePage {
 /// This is indicates by the prefix of the number, if the number has no prefix it is assumed to be
 /// base-10 (Decimal)
 #[derive(Debug, Clone, Copy)]
-enum NumericState {
+pub enum NumericState {
     Decimal,
     Hex,
     Octal,
@@ -56,7 +56,7 @@ enum NumericState {
 impl NumericState {
     /// Create a `NumericState` from a string, will look at the first two characters to see if it
     /// has a prefix or not
-    fn new(str: &str) -> Self {
+    pub fn new(str: &str) -> Self {
         match str.get(0..2) {
             Some("0x") => NumericState::Hex,
             Some("0X") => NumericState::Hex,
@@ -69,12 +69,12 @@ impl NumericState {
     }
 
     /// If this `NumericState` has a prefix to identify itself within a string
-    fn has_prefix(&self) -> bool {
+    pub fn has_prefix(&self) -> bool {
         !matches!(self, NumericState::Decimal)
     }
 
     /// Attempt to parse the number into a `BigUint` based on the `NumericState`
-    fn parse(&self, str: &str) -> Result<BigUint, ParseBigIntError> {
+    pub fn parse(&self, str: &str) -> Result<BigUint, ParseBigIntError> {
         BigUint::from_str_radix(
             str,
             match self {
@@ -87,7 +87,7 @@ impl NumericState {
     }
 
     /// A short hand function, combining both `new()` and `parse()` into one
-    fn immediate_parse(str: &str) -> Result<BigUint, ParseBigIntError> {
+    pub fn immediate_parse(str: &str) -> Result<BigUint, ParseBigIntError> {
         let state = Self::new(str);
         let non_prefix = match state.has_prefix() {
             true => str.get(2..).unwrap_or_default(),

@@ -1,10 +1,9 @@
 use std::io::{ErrorKind, Read as IoRead, Result as IoResult, Write as IoWrite};
 
 use crate::{
-    communication::{
+    cli::CommandOutput, communication::{
         perform_register_operation, IlaRegisters, ReadWrite, RegisterOutput, SignalCluster,
-    },
-    config::IlaConfig,
+    }, config::IlaConfig
 };
 
 /// Different operations for how multiple predicates are combined
@@ -13,6 +12,15 @@ use crate::{
 pub enum PredicateOperation {
     And = 0,
     Or = 1,
+}
+
+impl CommandOutput for PredicateOperation {
+    fn command_output(&self) -> String {
+        match self {
+            PredicateOperation::And => "and",
+            PredicateOperation::Or => "or",
+        }.into()
+    }
 }
 
 impl TryFrom<u32> for PredicateOperation {

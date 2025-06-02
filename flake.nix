@@ -20,8 +20,9 @@
           clash-ghc = clash-compiler.packages.${system}.clash-ghc;
           cabal-install = nixpkgs.legacyPackages.${system}.cabal-install;
         };
-        pkgs = clash-compiler.inputs.nixpkgs.legacyPackages.${system};
-        hsPkgs = pkgs.haskell.packages.ghc910.extend (overlay);
+        clashPkgs = clash-compiler.inputs.nixpkgs.legacyPackages.${system};
+        hsPkgs = clashPkgs.haskell.packages.ghc910.extend (overlay);
+        pkgs = nixpkgs.legacyPackages.${system};
       in
       {
         devShells.default = pkgs.mkShell {
