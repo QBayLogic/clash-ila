@@ -90,6 +90,8 @@ pub struct TuiSession<'a> {
     captured: Vec<SignalCluster>,
     /// Checks if the predicate is triggered or not
     triggered: bool,
+    /// The amount of samples currently stored in the buffer
+    sample_count: u32,
     /// The time since the last triggered check has been performed
     last_trigger_check: Instant,
     /// If a configuration change has been made and this is set, it will rearm the trigger as well
@@ -117,6 +119,7 @@ impl<'a> TuiSession<'a> {
             log: Vec::with_capacity(64),
             captured: vec![],
             triggered: false,
+            sample_count: 0,
             last_trigger_check: Instant::now(),
             auto_reset: false,
             device_path: device_path.display().to_string(),
@@ -144,7 +147,7 @@ impl<'a> TuiSession<'a> {
             let info_layout = Layout::default()
                 .direction(layout::Direction::Vertical)
                 .margin(1)
-                .constraints([Constraint::Length(3), Constraint::Fill(1)])
+                .constraints([Constraint::Length(4), Constraint::Fill(1)])
                 .split(main_layout[1]);
 
             // Ensure the lines fit within the Paragraph's range
@@ -166,6 +169,11 @@ impl<'a> TuiSession<'a> {
                     "Received ".into(),
                     self.captured.len().to_string().bold().blue(),
                     " captured".into(),
+                ]),
+                Line::from_iter([
+                    "Buffer currently contains ".into(),
+                    self.sample_count.to_string().bold().blue(),
+                    " samples".into(),
                 ]),
                 Line::from_iter([
                     "The ILA is ".into(),
@@ -277,7 +285,7 @@ impl<'a> TuiSession<'a> {
                     self.log
                         .push("System is not triggered, refusing to read samples".into());
                 } else {
-                    let indices: Vec<u32> = (0_u32..self.config.buffer_size as u32).collect();
+                    let indices: Vec<u32> = (0_u32..self.sample_count).collect();
                     match perform_register_operation(
                         tx_port,
                         self.config,
@@ -476,6 +484,17 @@ impl<'a> TuiSession<'a> {
                     _ => {
                         self.log.push("Unable to check for trigger status".into());
                         false
+                    }
+                };
+                self.sample_count = match perform_register_operation(
+                    &mut tx_port,
+                    self.config,
+                    &IlaRegisters::SampleCount,
+                ) {
+                    Ok(RegisterOutput::SampleCount(count)) => count,
+                    _ => {
+                        self.log.push("Unable to check for sample count".into());
+                        self.sample_count
                     }
                 };
 

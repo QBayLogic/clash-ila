@@ -183,6 +183,8 @@ pub enum IlaRegisters {
     CaptureOp(ReadWrite<(), PredicateOperation>),
     /// Which predicates are active for the capture
     CaptureSelect(ReadWrite<(), u32>),
+    /// The amount of samples current stored in the buffer
+    SampleCount,
 }
 
 /// Output of the register whenever a read operation is performed on the ILA.
@@ -202,6 +204,7 @@ pub enum RegisterOutput {
     CaptureCompare(SignalCluster),
     CaptureOp(PredicateOperation),
     CaptureSelect(u32),
+    SampleCount(u32),
 }
 
 impl CommandOutput for bool {
@@ -235,6 +238,7 @@ impl CommandOutput for RegisterOutput {
             RegisterOutput::CaptureCompare(signal_cluster) => signal_cluster.command_output(),
             RegisterOutput::CaptureOp(predicate_operation) => predicate_operation.command_output(),
             RegisterOutput::CaptureSelect(select) => select.command_output(),
+            RegisterOutput::SampleCount(amount) => amount.command_output(),
         }
     }
 }
@@ -248,6 +252,7 @@ impl IlaRegisters {
             IlaRegisters::TriggerReset => (0x0000_0000, [false, false, true, false]),
             IlaRegisters::TriggerPoint(_) => (0x0000_0001, [true; 4]),
             IlaRegisters::Buffer(_) => (0x3000_0000, [true; 4]),
+            IlaRegisters::SampleCount => (0x0000_0007, [true; 4]),
             IlaRegisters::Hash(_) => (0x0000_0002, [true; 4]),
 
             IlaRegisters::TriggerMask(_) => (0x1000_0000, [true; 4]),
@@ -320,6 +325,10 @@ impl IlaRegisters {
                 None => RegisterOutput::None,
             },
             IlaRegisters::CaptureSelect(ReadWrite::Write(_)) => RegisterOutput::None,
+            IlaRegisters::SampleCount => match output.first() {
+                Some(n) => RegisterOutput::SampleCount(*n),
+                None => RegisterOutput::None,
+            },
         }
     }
 
@@ -421,6 +430,9 @@ impl IlaRegisters {
                 WbTransaction::new_writes(byte_select, addr, vec![*selection])
             }
             IlaRegisters::CaptureSelect(ReadWrite::Read(_)) => {
+                WbTransaction::new_reads(byte_select, addr, vec![0])
+            }
+            IlaRegisters::SampleCount => {
                 WbTransaction::new_reads(byte_select, addr, vec![0])
             }
         }

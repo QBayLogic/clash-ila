@@ -356,6 +356,8 @@ pub enum RegisterSubcommand {
     CaptureOp(ReadWriteArgument<Flag, Operation>),
     /// Which predicates are active for the capture
     CaptureSelect(ReadWriteArgument<Flag, Word>),
+    /// The amount of samples current stored in the buffer
+    SampleCount,
 }
 
 impl<R> ReadWriteArgument<R, Unsupported>
@@ -441,7 +443,7 @@ impl From<RegisterSubcommand> for IlaRegisters {
             RegisterSubcommand::CaptureSelect(read_write_argument) => {
                 Self::CaptureSelect(read_write_argument.into())
             }
+            RegisterSubcommand::SampleCount => Self::SampleCount,
         }
     }
 }
-
