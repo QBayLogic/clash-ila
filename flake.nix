@@ -1,8 +1,4 @@
-
 { 
-  nixConfig.extra-substituters = [ "http://warnsveld" ];
-  nixConfig.extra-trusted-public-keys = [ "warnsveld:kt+WouF9QqWCs9tmRt+05V21V575togaM8/MFtaKeCg=" ];
-
   description = "A flake enabling tooling for clash-formal-playground";
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
@@ -21,7 +17,7 @@
           cabal-install = nixpkgs.legacyPackages.${system}.cabal-install;
         };
         clashPkgs = clash-compiler.inputs.nixpkgs.legacyPackages.${system};
-        hsPkgs = clashPkgs.haskell.packages.ghc910.extend (overlay);
+        hsPkgs = clashPkgs.haskell.packages.ghc910.extend overlay;
         pkgs = nixpkgs.legacyPackages.${system};
       in
       {
