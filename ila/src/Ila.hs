@@ -423,13 +423,20 @@ ilaWb (IlaConfig @_ @a @depth @m depth initTriggerPoint ilaHash tracing predicat
           (initRM, None)
           (bundle (fwdM2S, tracing))
 
+    -- \| If the trigger gets triggered in the current sample, the rest of the system will only know
+    -- that the next cycle. This means that there will be an off-by-one error for capturing the
+    -- samples
+    --
+    -- To combat this, we simply delay the signal we sample by one cycle!
+    delayedTrace = register (unpack 0) tracing
+
     -- \| The output from the ILA's internal buffer
     bufferOutput =
       ilaBufferManager
         ( ilaCore
             depth
             ilaRM.capture
-            tracing
+            delayedTrace
             (not <$> ilaRM.shouldSample)
             ((== ResetTrigger) <$> ilaAction)
         )
