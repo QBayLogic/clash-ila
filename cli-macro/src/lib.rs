@@ -187,10 +187,6 @@ pub fn generate_registers(attr: TokenStream, item: TokenStream) -> TokenStream {
 
     quote! {
         /// All the possible registers the CLI may write too
-        ///
-        /// This list SHOULD be kept up to date and 1:1 reflect the `IlaRegisters` enum
-        /// The only reason this is a different enum is because the `IlaRegisters` enum is not compatible
-        /// with Clap's `Subcommand`
         #[derive(Subcommand, Debug)]
         pub enum #cli_enum_ident {
             #(#cli_variants),*

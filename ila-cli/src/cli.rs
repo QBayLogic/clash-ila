@@ -3,7 +3,8 @@ use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use crate::communication::{perform_register_operation, IlaRegisters, RegisterOutput};
+use crate::communication::{perform_register_operation, RegisterOutput};
+use crate::cli_registers::IlaRegisters;
 use crate::config::ConfigMethod;
 use crate::export::ExportCluster;
 use crate::tui::TuiSession;

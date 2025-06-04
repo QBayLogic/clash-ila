@@ -19,8 +19,9 @@ use ratatui::{
 };
 
 use crate::communication::{
-    perform_register_operation, IlaRegisters, RegisterOutput, SignalCluster,
+    perform_register_operation, RegisterOutput, SignalCluster,
 };
+use crate::cli_registers::IlaRegisters;
 use crate::config::IlaConfig;
 use crate::predicates::IlaPredicate;
 use crate::predicates::PredicateTarget;

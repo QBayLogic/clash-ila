@@ -1,11 +1,12 @@
 use std::any::Any;
 
-use crate::communication::{IlaRegisters, ReadWrite};
+use crate::communication::ReadWrite;
 use crate::predicates::PredicateOperation;
 use crate::predicates_tui::NumericState;
 use clap::builder::{TypedValueParser, ValueParserFactory};
 use clap::error::ErrorKind;
 use clap::{arg, Arg, Args, Command, Error, FromArgMatches, Subcommand};
+use cli_macro::generate_registers;
 
 /// A macro for generating 'Parser' variants for 'Container' types used by Clap
 ///
@@ -321,45 +322,6 @@ where
     }
 }
 
-/// All the possible registers the CLI may write too
-///
-/// This list SHOULD be kept up to date and 1:1 reflect the `IlaRegisters` enum
-/// The only reason this is a different enum is because the `IlaRegisters` enum is not compatible
-/// with Clap's `Subcommand`
-#[derive(Subcommand, Debug)]
-pub enum RegisterSubcommand {
-    /// Register containing the capture state of the ILA
-    Capture,
-    /// Register re-arming the trigger (and clear the buffer)
-    TriggerReset,
-    /// Checks the ILA for its triggered status
-    TriggerState,
-    /// Register controlling how many samples it should store after triggering
-    TriggerPoint(ReadWriteArgument<Unsupported, Word>),
-    /// The value to mask the samples against before triggering
-    TriggerMask(ReadWriteArgument<Word, ByteStream>),
-    /// The value used by the trigger to compare samples against, if it is set to do so
-    TriggerCompare(ReadWriteArgument<Word, ByteStream>),
-    /// How the trigger should handle mutliple predicates
-    TriggerOp(ReadWriteArgument<Flag, Operation>),
-    /// Which predicates are active for the trigger
-    TriggerSelect(ReadWriteArgument<Flag, Word>),
-    /// Read out samples from the ILA buffer, each vector item is an index within the buffer
-    Buffer(ReadWriteArgument<Indices, Unsupported>),
-    /// Compare the hash value within the ILA with the value provided
-    Hash(ReadWriteArgument<Word, Unsupported>),
-    /// The value to mask samples before being fed to the capture predicates
-    CaptureMask(ReadWriteArgument<Word, ByteStream>),
-    /// The value used by the capture predicates to compare samples against, if it is set to do so
-    CaptureCompare(ReadWriteArgument<Word, ByteStream>),
-    /// How the capture should handle mutliple predicates
-    CaptureOp(ReadWriteArgument<Flag, Operation>),
-    /// Which predicates are active for the capture
-    CaptureSelect(ReadWriteArgument<Flag, Word>),
-    /// The amount of samples current stored in the buffer
-    SampleCount,
-}
-
 impl<R> ReadWriteArgument<R, Unsupported>
 where
     R: ArgumentContainer,
@@ -401,49 +363,37 @@ where
     }
 }
 
-impl From<RegisterSubcommand> for IlaRegisters {
-    fn from(value: RegisterSubcommand) -> Self {
-        // I am sure that there is a way to automagically generate this implementation, or the
-        // entire `RegisterSubcommand` type for that matter of fact. But I am not well versed
-        // enough in macros do to so
-        match value {
-            RegisterSubcommand::Capture => Self::Capture,
-            RegisterSubcommand::TriggerReset => Self::TriggerReset,
-            RegisterSubcommand::TriggerState => Self::TriggerState,
-            RegisterSubcommand::TriggerPoint(read_write_argument) => {
-                IlaRegisters::TriggerPoint(read_write_argument.coerce_write())
-            }
-            RegisterSubcommand::TriggerMask(read_write_argument) => {
-                Self::TriggerMask(read_write_argument.into())
-            }
-            RegisterSubcommand::TriggerCompare(read_write_argument) => {
-                Self::TriggerCompare(read_write_argument.into())
-            }
-            RegisterSubcommand::TriggerOp(read_write_argument) => {
-                Self::TriggerOp(read_write_argument.into())
-            }
-            RegisterSubcommand::TriggerSelect(read_write_argument) => {
-                Self::TriggerSelect(read_write_argument.into())
-            }
-            RegisterSubcommand::Buffer(read_write_argument) => {
-                Self::Buffer(read_write_argument.coerce_read())
-            }
-            RegisterSubcommand::Hash(read_write_argument) => {
-                Self::Hash(read_write_argument.coerce_read())
-            }
-            RegisterSubcommand::CaptureMask(read_write_argument) => {
-                Self::CaptureMask(read_write_argument.into())
-            }
-            RegisterSubcommand::CaptureCompare(read_write_argument) => {
-                Self::CaptureCompare(read_write_argument.into())
-            }
-            RegisterSubcommand::CaptureOp(read_write_argument) => {
-                Self::CaptureOp(read_write_argument.into())
-            }
-            RegisterSubcommand::CaptureSelect(read_write_argument) => {
-                Self::CaptureSelect(read_write_argument.into())
-            }
-            RegisterSubcommand::SampleCount => Self::SampleCount,
-        }
-    }
+#[generate_registers(to = ReadWrite, unsupported = Unsupported, newtype = IlaRegisters)]
+pub enum RegisterSubcommand {
+    /// Register containing the capture state of the ILA
+    Capture(ReadWriteArgument<Unsupported, Unsupported>),
+    /// Register re-arming the trigger (and clear the buffer)
+    TriggerReset(ReadWriteArgument<Unsupported, Unsupported>),
+    /// Checks the ILA for its triggered status
+    TriggerState(ReadWriteArgument<Unsupported, Unsupported>),
+    /// Register controlling how many samples it should store after triggering
+    TriggerPoint(ReadWriteArgument<Unsupported, Word>),
+    /// The value to mask the samples against before triggering
+    TriggerMask(ReadWriteArgument<Word, ByteStream>),
+    /// The value used by the trigger to compare samples against, if it is set to do so
+    TriggerCompare(ReadWriteArgument<Word, ByteStream>),
+    /// How the trigger should handle mutliple predicates
+    TriggerOp(ReadWriteArgument<Flag, Operation>),
+    /// Which predicates are active for the trigger
+    TriggerSelect(ReadWriteArgument<Flag, Word>),
+    /// Read out samples from the ILA buffer, each vector item is an index within the buffer
+    Buffer(ReadWriteArgument<Indices, Unsupported>),
+    /// Compare the hash value within the ILA with the value provided
+    Hash(ReadWriteArgument<Word, Unsupported>),
+    /// The value to mask samples before being fed to the capture predicates
+    CaptureMask(ReadWriteArgument<Word, ByteStream>),
+    /// The value used by the capture predicates to compare samples against, if it is set to do so
+    CaptureCompare(ReadWriteArgument<Word, ByteStream>),
+    /// How the capture should handle mutliple predicates
+    CaptureOp(ReadWriteArgument<Flag, Operation>),
+    /// Which predicates are active for the capture
+    CaptureSelect(ReadWriteArgument<Flag, Word>),
+    /// The amount of samples current stored in the buffer
+    SampleCount(ReadWriteArgument<Unsupported, Unsupported>),
 }
+
