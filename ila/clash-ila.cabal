@@ -37,12 +37,10 @@ common common-options
   default-language: GHC2021
   build-depends:
     base,
-    hedgehog >= 1.0.3 && < 1.6,
+    hedgehog,
     split,
     template-haskell,
     aeson,
-    th-abstraction,
-    th-expand-syns,
     hashable,
     clash-cores,
     clash-lib,
