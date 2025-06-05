@@ -88,7 +88,7 @@ depacketizeProperty = property $ do
     simulated =
       P.take (P.length expected) $
         DM.catMaybes $
-          simulateC (wcre etherboneDfPacketizer) simOptions (Df.Data <$> byteStream)
+          simulateC (wcre etherboneDfPacketizer) simOptions (Just <$> byteStream)
 
   simulated === expected
 
