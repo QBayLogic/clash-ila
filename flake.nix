@@ -9,6 +9,7 @@
   outputs = { nixpkgs, ecpprog, flake-utils, clash-compiler, ... }:
     flake-utils.lib.eachDefaultSystem (system:
       let
+        # Sources for things which do not yet have a flake
         non-flake-srcs = {
           clash-protocols = pkgs.fetchFromGitHub {
             owner = "clash-lang";
@@ -29,6 +30,8 @@
             hash = "sha256-sPfLRjuMxqVRMzXrHRCuKKrdTdqgAJ33pf11DoTP84Q=";
           };
         };
+
+        # Patch programs to be the correct version we want
         overlay = final: prev: {
           cabal-install = nixpkgs.legacyPackages.${system}.cabal-install;
           clash-prelude = clash-compiler.packages.${system}.clash-prelude;
@@ -54,17 +57,26 @@
             root = non-flake-srcs.clash-cores.outPath;
             overrides = overlay;
           };
-          clash-ila = hs-pkgs.developPackage {
-            root = ./ila;
-            overrides = overlay;
-          };
         };
         clash-input-pkgs = clash-compiler.inputs.nixpkgs.legacyPackages.${system};
         hs-pkgs = clash-input-pkgs.haskell.packages.ghc910.extend overlay;
+
+        # Packages built by this repository
+        clash-ila = hs-pkgs.developPackage {
+          root = ./ila;
+          overrides = overlay;
+        };
+        ila-cli = pkgs.rustPlatform.buildRustPackage {
+          pname = "ila-cli";
+          version = "v0.1.0";
+          src = ./ila-cli;
+          cargoHash = "sha256-WDehfqjaX2FfXOXYTC48N1MUZ2koqif/rAwmaWSZ5B0=";
+        };
+
+        # General packages from nixpkgs
         pkgs = nixpkgs.legacyPackages.${system};
       in
       {
-        hs = hs-pkgs;
         devShells.default = pkgs.mkShell {
           inputsFrom = [
             clash-compiler.packages.${system}.clash-lib.env
@@ -87,9 +99,6 @@
               pkgs.cargo
               pkgs.rustc
               pkgs.clippy
-              # Required as we depend on libudev for tty iteration
-              pkgs.pkg-config
-              pkgs.udev
 
               # Surfer to view VCD
               pkgs.surfer
@@ -99,6 +108,15 @@
             ]
           ;
         };
-        packages.default = hs-pkgs.clash-ila;
+        packages = {
+          clash-ila = clash-ila;
+          ila-cli = ila-cli;
+
+          default = clash-ila;
+        };
+        apps.default = {
+          type = "app";
+          program = "${ila-cli}/bin/ila-cli";
+        };
       });
 }
