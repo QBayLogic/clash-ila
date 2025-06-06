@@ -23,7 +23,7 @@ test:
 	${CABAL} test
 
 repl:
-	${CABAL} run clash-proxy:clash -- --interactive
+	${CABAL} run clash -- --interactive
 
 upload: ${BUILDDIR}/04-bitstream/${TOP}.bit
 	${PROG} -S $<
@@ -54,12 +54,12 @@ ${BUILDDIR}/03-net/$(TOP).json: ${BUILDDIR}/02-hdl/${TOP}.v
 		-p 'read_verilog $(dir $^)/*.v; synth_ecp5 -top $(TOP) -json $@'
 
 ${BUILDDIR}/02-hdl/${TOP}.v: top/${NAME}.hs dist-newstyle/packagedb src/*
-	${CABAL} build clash-ila:${NAME}
+	${CABAL} build clash-ila:${NAME} --write-ghc-environment-files always
 	mkdir -p ${BUILDDIR}/01-clash
 	echo
-	${CABAL} run clash-proxy:clash -- \
+	${CABAL} run clash -- \
 		-fplugin=Protocols.Plugin \
-		-package-env $(abspath ..)/.ghc.environment.* \
+		-package-env $(abspath .)/.ghc.environment.* \
 		--verilog \
 		-outputdir ${BUILDDIR}/01-clash \
 		$<
@@ -67,7 +67,7 @@ ${BUILDDIR}/02-hdl/${TOP}.v: top/${NAME}.hs dist-newstyle/packagedb src/*
 	mv ${BUILDDIR}/01-clash/${NAME}.topEntity ${BUILDDIR}/02-hdl
 
 dist-newstyle/packagedb:
-	${CABAL} build
+	${CABAL} build --write-ghc-environment-files always
 
 ##----------------------------------------------------------------------------##
 #   Cleanup                                                                    #

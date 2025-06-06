@@ -42,11 +42,14 @@ common common-options
     template-haskell,
     aeson,
     hashable,
+    -- clash-ghc,
     clash-cores,
     clash-lib,
     clash-prelude,
     clash-prelude-hedgehog,
     clash-protocols,
+    clash-protocols-base,
+    -- clash-plugin,
     string-interpolate,
     prettyprinter,
     utf8-string,
@@ -57,6 +60,14 @@ common common-options
     ghc-typelits-natnormalise,
     ghc-typelits-extra,
     ghc-typelits-knownnat
+
+executable clash
+  main-is: clash/Main.hs
+  build-depends:
+    base,
+    clash-ghc,
+    clash-ila,
+    blink
 
 library
   import: common-options

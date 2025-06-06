@@ -33,7 +33,6 @@
 
         # Patch programs to be the correct version we want
         overlay = final: prev: {
-          cabal-install = nixpkgs.legacyPackages.${system}.cabal-install;
           clash-prelude = clash-compiler.packages.${system}.clash-prelude;
           clash-prelude-hedgehog = clash-compiler.packages.${system}.clash-prelude-hedgehog;
           clash-lib = clash-compiler.packages.${system}.clash-lib;
@@ -77,10 +76,9 @@
         pkgs = nixpkgs.legacyPackages.${system};
       in
       {
-        devShells.default = pkgs.mkShell {
-          inputsFrom = [
-            clash-compiler.packages.${system}.clash-lib.env
-            clash-compiler.packages.${system}.clash-ghc.env
+        devShells.default = hs-pkgs.shellFor {
+          packages = p: [
+            clash-ila
           ];
 
           nativeBuildInputs = 
