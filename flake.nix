@@ -69,7 +69,7 @@
           pname = "ila-cli";
           version = "v0.1.0";
           src = ./ila-cli;
-          cargoHash = "sha256-WDehfqjaX2FfXOXYTC48N1MUZ2koqif/rAwmaWSZ5B0=";
+          cargoHash = "sha256-r0YSfT1o23n9gGBbvZIb99iSvA1V8VZNu78VZzJf0k0=";
         };
 
         # General packages from nixpkgs

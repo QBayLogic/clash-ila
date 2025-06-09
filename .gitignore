@@ -5,3 +5,4 @@ dist-newstyle
 ila/_build
 ila-cli/target
 ila/_build
+cli-macro/target

@@ -3,7 +3,8 @@ use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use crate::communication::{perform_register_operation, IlaRegisters, RegisterOutput};
+use crate::communication::{perform_register_operation, RegisterOutput};
+use crate::cli_registers::IlaRegisters;
 use crate::config::ConfigMethod;
 use crate::export::ExportCluster;
 use crate::tui::TuiSession;
@@ -111,6 +112,12 @@ pub struct ExportArgs {
     #[arg(short, long, default_value_t = 9600, help = "Sets baud rate")]
     baud: u32,
 
+    #[arg(short = 's', long, default_value_t = 0, help = "Start index to grab data from (inclusive)")]
+    start_index: u32,
+
+    #[arg(short = 'x', long, help = "End index to grab data from (exclusive)")]
+    end_index: u32,
+
     #[command(flatten)]
     config: ConfigMethod,
 
@@ -129,7 +136,7 @@ impl ParseSubcommand for ExportArgs {
             .get_config()
             .unwrap_or_else(|_| panic!("File at {:?} contained errors", &self.config));
 
-        let indices: Vec<u32> = (0_u32..config.buffer_size as u32).collect();
+        let indices: Vec<u32> = (self.start_index..self.end_index).collect();
         let cluster = match perform_register_operation(
             &mut tx_port,
             &config,

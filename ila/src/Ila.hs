@@ -128,7 +128,7 @@ ilaBufferManager ::
   Signal dom (WishboneM2S addrW 4 (BitVector 32)) ->
   -- | The specific word associated with the requested address, if the current cycle is a read cycle
   -- it will return `0` instead.
-  Signal dom (BitVector 32)
+  (Signal dom (BitVector 32), Signal dom (Index (depth + 1)))
 ilaBufferManager buffer incoming = returnData
  where
   -- \| Returns the index and word index of the current address provided
@@ -141,14 +141,16 @@ ilaBufferManager buffer incoming = returnData
       (unpack $ resize bIndex, unpack $ resize wIndex)
   (bufferIndex, wordIndex) = unbundle $ getBufferIndex <$> incoming
 
-  (bufferData, _bufferLength) = buffer bufferIndex
+  (bufferData, bufferLength) = buffer bufferIndex
 
   -- \| If in a read cycle, it will contain the output of the buffer, otherwise it will return 0
   returnData =
-    mux
-      (not . writeEnable <$> incoming .&&. compareAddrRange 0x3000_0000 0x3fff_ffff incoming)
-      (liftA2 (getWord @32) bufferData wordIndex)
-      (pure 0)
+    ( mux
+        (not . writeEnable <$> incoming .&&. compareAddrRange 0x3000_0000 0x3fff_ffff incoming)
+        (liftA2 (getWord @32) bufferData wordIndex)
+        (pure 0)
+    , bufferLength
+    )
 
 -- | Defines how the ILA should treat the trigger select registers
 data IlaPredicateOperation = PredicateAND | PredicateOR
@@ -183,6 +185,7 @@ A lot of the register map is also exposed as a memory map, with the following la
 | 0x0000_0004 | 0b1111     | ILA trigger select    | ReadWrite'2 |
 | 0x0000_0005 | 0b0001     | ILA capture operation | ReadWrite   |
 | 0x0000_0006 | 0b1111     | ILA capture select    | ReadWrite'2 |
+| 0x0000_0007 | 0b1111     | Sample count          | Read        |
 | 0x1000_0000 | 0b1111     | ILA trigger mask      | ReadWrite   |
 | 0x1100_0000 | 0b1111     | ILA trigger compare   | ReadWrite   |
 | 0x2000_0000 | 0b1111     | ILA capture mask      | ReadWrite   |
@@ -205,6 +208,8 @@ data IlaRM bitSizeA depth n = IlaRM
   -- state by resetting the ILA.
   , sampledAfterTrigger :: Index depth
   -- ^ The amount of samples the ILA captured after triggering
+  , sampleCount :: Index (depth + 1)
+  -- ^ The amount of samples currently being stored in the buffer
   , triggerSelect :: BitVector 32
   -- ^ Which trigger predicate to use
   , triggerOperation :: IlaPredicateOperation
@@ -254,6 +259,7 @@ readIlaMM 0x0000_0003 0b0001 rm = Just . resize $ pack rm.triggerOperation
 readIlaMM 0x0000_0004 0b1111 rm = Just rm.triggerSelect
 readIlaMM 0x0000_0005 0b0001 rm = Just . resize $ pack rm.captureOperation
 readIlaMM 0x0000_0006 0b1111 rm = Just rm.captureSelect
+readIlaMM 0x0000_0007 0b1111 rm = Just . resize $ pack rm.sampleCount
 readIlaMM address 0b1111 rm
   | testBits address 0x1000_0000 0xff00_0000 =
       Just $ getWord rm.triggerMask index
@@ -357,6 +363,7 @@ ilaWb (IlaConfig @_ @a @depth @m depth initTriggerPoint ilaHash tracing predicat
         , triggerPoint = initTriggerPoint
         , shouldSample = False
         , sampledAfterTrigger = 0
+        , sampleCount = 0
         , triggerOperation = PredicateOR
         , triggerSelect = minBound
         , triggerMask = maxBound
@@ -373,24 +380,27 @@ ilaWb (IlaConfig @_ @a @depth @m depth initTriggerPoint ilaHash tracing predicat
       Bool ->
       -- \| If the capture is set
       Bool ->
+      -- \| The amount of samples currently being stored in the buffer
+      Index (depth + 1) ->
       -- \| The current register map
       IlaRM (BitSize a) depth m ->
       -- \| The updated register map
       IlaRM (BitSize a) depth m
-    updateRM triggered capture rm =
+    updateRM triggered capture buffLength rm =
       rm
         { triggered = rm.triggered || triggered
         , capture = capture
         , sampledAfterTrigger = if rm.triggered then satAdd SatBound 1 rm.sampledAfterTrigger else 0
         , shouldSample = not rm.triggered || rm.sampledAfterTrigger < rm.triggerPoint
+        , sampleCount = buffLength
         }
 
     -- \| Selects the right predicate and applies it on incoming sample
     doesTrigger :: IlaRM (BitSize a) depth m -> a -> Bool
     doesTrigger rm currentSample =
       rm.capture -- If capture is disabled, don't bother with testing predicates
-        && ( predicateOperation rm.triggerOperation
-              $ zipWith
+        && ( predicateOperation rm.triggerOperation $
+              zipWith
                 (predicateUnselectedDefault rm.triggerOperation)
                 (reverse . unpack $ resize rm.triggerSelect)
                 ((\predicate -> predicate currentSample rm.triggerCompare rm.triggerMask) <$> predicates)
@@ -399,37 +409,53 @@ ilaWb (IlaConfig @_ @a @depth @m depth initTriggerPoint ilaHash tracing predicat
     -- \| Selects the right predicate and applies it on incoming sample
     captureActive :: IlaRM (BitSize a) depth m -> a -> Bool
     captureActive rm currentSample =
-      predicateOperation rm.captureOperation
-        $ zipWith
+      predicateOperation rm.captureOperation $
+        zipWith
           (predicateUnselectedDefault rm.captureOperation)
           (reverse . unpack $ resize rm.captureSelect)
           ((\predicate -> predicate currentSample rm.captureCompare rm.captureMask) <$> predicates)
 
+    -- \| The transfer function of the moore state machine
+    --
+    -- This function will update the register map of the ILA, always first attempting to update
+    -- the ILA with wishbone write requests, then updating non-wishbone dependent aspects of the ILA
+    transfer (oldRM, _) (wb, currentSample, buffLength) = wbUpdate regularUpdate
+     where
+      wbUpdate
+        | wb.strobe && wb.busCycle && wb.writeEnable = writeIlaMM wb.addr wb.busSelect wb.writeData
+        -- If there's no wishbone write request, simply id
+        | otherwise = \rm -> (rm, None)
+
+      regularUpdate =
+        updateRM
+          (doesTrigger oldRM currentSample)
+          (captureActive oldRM currentSample)
+          buffLength
+          oldRM
+
     -- \| Handle WB writes and update the memory map accordingly,
     (ilaRM, ilaAction) =
-      unbundle
-        $ moore
-          ( \(oldMM, _) (wb, currentSample) ->
-              if wb.strobe && wb.busCycle && wb.writeEnable
-                then
-                  writeIlaMM wb.addr wb.busSelect wb.writeData
-                    $ updateRM (doesTrigger oldMM currentSample) (captureActive oldMM currentSample) oldMM
-                else
-                  ( updateRM (doesTrigger oldMM currentSample) (captureActive oldMM currentSample) oldMM
-                  , None
-                  )
-          )
+      unbundle $
+        moore
+          transfer
           id
           (initRM, None)
-          (bundle (fwdM2S, tracing))
+          (bundle (fwdM2S, tracing, bufferLength))
+
+    -- \| If the trigger gets triggered in the current sample, the rest of the system will only know
+    -- that the next cycle. This means that there will be an off-by-one error for capturing the
+    -- samples
+    --
+    -- To combat this, we simply delay the signal we sample by one cycle!
+    delayedTrace = register (unpack 0) tracing
 
     -- \| The output from the ILA's internal buffer
-    bufferOutput =
+    (bufferOutput, bufferLength) =
       ilaBufferManager
         ( ilaCore
             depth
             ilaRM.capture
-            tracing
+            delayedTrace
             (not <$> ilaRM.shouldSample)
             ((== ResetTrigger) <$> ilaAction)
         )

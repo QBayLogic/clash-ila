@@ -2,6 +2,7 @@ use crate::cli::CommandOutput;
 use crate::config::IlaConfig;
 use crate::predicates::PredicateOperation;
 use crate::wishbone::WbTransaction;
+use crate::cli_registers::IlaRegisters;
 use bitvec::prelude::{BitVec, Msb0};
 use bitvec::slice::BitSlice;
 use bitvec::view::BitView;
@@ -149,41 +150,43 @@ impl SignalCluster {
     }
 }
 
-/// An enum for operating on different registers on the ILA, without having to know the explicit
-/// address.
-#[derive(Debug, Clone, PartialEq, Eq)]
-#[allow(unused)]
-pub enum IlaRegisters {
-    /// Register controlling wether or not to capture samples
-    Capture,
-    /// Register re-arming the trigger (and clear the buffer)
-    TriggerReset,
-    /// Checks the ILA for it's triggered status
-    TriggerState,
-    /// Register controlling how many samples it should store after triggering
-    TriggerPoint(u32),
-    /// The value to mask the samples against before triggering
-    TriggerMask(ReadWrite<u32, Vec<u8>>),
-    /// The value used by the trigger to compare samples against, if it is set to do so
-    TriggerCompare(ReadWrite<u32, Vec<u8>>),
-    /// How the trigger should handle mutliple predicates
-    TriggerOp(ReadWrite<(), PredicateOperation>),
-    /// Which predicates are active for the trigger
-    TriggerSelect(ReadWrite<(), u32>),
-    /// Read out samples from the ILA buffer, each vector item is an index within the buffer
-    Buffer(Vec<u32>),
-    /// Read the hash of the ILA, can be used to check if the current instantiated ILA is
-    /// out-of-date
-    Hash(u32),
-    /// The value to mask samples before being fed to the capture predicates
-    CaptureMask(ReadWrite<u32, Vec<u8>>),
-    /// The value used by the capture predicates to compare samples against, if it is set to do so
-    CaptureCompare(ReadWrite<u32, Vec<u8>>),
-    /// How the capture should handle mutliple predicates
-    CaptureOp(ReadWrite<(), PredicateOperation>),
-    /// Which predicates are active for the capture
-    CaptureSelect(ReadWrite<(), u32>),
-}
+// /// An enum for operating on different registers on the ILA, without having to know the explicit
+// /// address.
+// #[derive(Debug, Clone, PartialEq, Eq)]
+// #[allow(unused)]
+// pub enum IlaRegisters {
+//     /// Register controlling wether or not to capture samples
+//     Capture,
+//     /// Register re-arming the trigger (and clear the buffer)
+//     TriggerReset,
+//     /// Checks the ILA for it's triggered status
+//     TriggerState,
+//     /// Register controlling how many samples it should store after triggering
+//     TriggerPoint(u32),
+//     /// The value to mask the samples against before triggering
+//     TriggerMask(ReadWrite<u32, Vec<u8>>),
+//     /// The value used by the trigger to compare samples against, if it is set to do so
+//     TriggerCompare(ReadWrite<u32, Vec<u8>>),
+//     /// How the trigger should handle mutliple predicates
+//     TriggerOp(ReadWrite<(), PredicateOperation>),
+//     /// Which predicates are active for the trigger
+//     TriggerSelect(ReadWrite<(), u32>),
+//     /// Read out samples from the ILA buffer, each vector item is an index within the buffer
+//     Buffer(Vec<u32>),
+//     /// Read the hash of the ILA, can be used to check if the current instantiated ILA is
+//     /// out-of-date
+//     Hash(u32),
+//     /// The value to mask samples before being fed to the capture predicates
+//     CaptureMask(ReadWrite<u32, Vec<u8>>),
+//     /// The value used by the capture predicates to compare samples against, if it is set to do so
+//     CaptureCompare(ReadWrite<u32, Vec<u8>>),
+//     /// How the capture should handle mutliple predicates
+//     CaptureOp(ReadWrite<(), PredicateOperation>),
+//     /// Which predicates are active for the capture
+//     CaptureSelect(ReadWrite<(), u32>),
+//     /// The amount of samples current stored in the buffer
+//     SampleCount,
+// }
 
 /// Output of the register whenever a read operation is performed on the ILA.
 #[allow(unused)]
@@ -202,6 +205,7 @@ pub enum RegisterOutput {
     CaptureCompare(SignalCluster),
     CaptureOp(PredicateOperation),
     CaptureSelect(u32),
+    SampleCount(u32),
 }
 
 impl CommandOutput for bool {
@@ -235,6 +239,7 @@ impl CommandOutput for RegisterOutput {
             RegisterOutput::CaptureCompare(signal_cluster) => signal_cluster.command_output(),
             RegisterOutput::CaptureOp(predicate_operation) => predicate_operation.command_output(),
             RegisterOutput::CaptureSelect(select) => select.command_output(),
+            RegisterOutput::SampleCount(amount) => amount.command_output(),
         }
     }
 }
@@ -248,6 +253,7 @@ impl IlaRegisters {
             IlaRegisters::TriggerReset => (0x0000_0000, [false, false, true, false]),
             IlaRegisters::TriggerPoint(_) => (0x0000_0001, [true; 4]),
             IlaRegisters::Buffer(_) => (0x3000_0000, [true; 4]),
+            IlaRegisters::SampleCount => (0x0000_0007, [true; 4]),
             IlaRegisters::Hash(_) => (0x0000_0002, [true; 4]),
 
             IlaRegisters::TriggerMask(_) => (0x1000_0000, [true; 4]),
@@ -320,6 +326,10 @@ impl IlaRegisters {
                 None => RegisterOutput::None,
             },
             IlaRegisters::CaptureSelect(ReadWrite::Write(_)) => RegisterOutput::None,
+            IlaRegisters::SampleCount => match output.first() {
+                Some(n) => RegisterOutput::SampleCount(*n),
+                None => RegisterOutput::None,
+            },
         }
     }
 
@@ -421,6 +431,9 @@ impl IlaRegisters {
                 WbTransaction::new_writes(byte_select, addr, vec![*selection])
             }
             IlaRegisters::CaptureSelect(ReadWrite::Read(_)) => {
+                WbTransaction::new_reads(byte_select, addr, vec![0])
+            }
+            IlaRegisters::SampleCount => {
                 WbTransaction::new_reads(byte_select, addr, vec![0])
             }
         }
