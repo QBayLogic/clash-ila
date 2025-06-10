@@ -65,11 +65,9 @@
           root = ./ila;
           overrides = overlay;
         };
-        ila-cli = pkgs.rustPlatform.buildRustPackage {
-          pname = "ila-cli";
-          version = "v0.1.0";
-          src = ./ila-cli;
-          cargoHash = "sha256-r0YSfT1o23n9gGBbvZIb99iSvA1V8VZNu78VZzJf0k0=";
+        ila-cli = import ./ila-cli/Cargo.nix {
+          nixpkgs = nixpkgs;
+          pkgs = pkgs;
         };
 
         # General packages from nixpkgs
@@ -112,9 +110,10 @@
 
           default = clash-ila;
         };
+        ila-cli = ila-cli;
         apps.default = {
           type = "app";
-          program = "${ila-cli}/bin/ila-cli";
+          program = "${ila-cli.rootCrate.build}/bin/ila-cli";
         };
       });
 }
