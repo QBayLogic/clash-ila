@@ -231,8 +231,7 @@ mod tests {
                     [0x00, 0x00, 0x00, 0x00].to_vec()
                 },
                 (0..index)
-                    .map(|n| (TEST_READ_ADDR + n).to_be_bytes())
-                    .flatten()
+                    .flat_map(|n| (TEST_READ_ADDR + n).to_be_bytes())
                     .collect(),
             ]
             .concat();
@@ -265,7 +264,7 @@ mod tests {
                 } else {
                     TEST_WRITE_ADDR.to_be_bytes().to_vec()
                 },
-                (0..index).map(|n| n.to_be_bytes()).flatten().collect(),
+                (0..index).flat_map(|n| n.to_be_bytes()).collect(),
             ]
             .concat();
             assert_eq!(

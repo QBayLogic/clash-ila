@@ -4,15 +4,13 @@ use std::{
 };
 
 use crate::{
-    communication::{Signal, SignalCluster},
+    communication::{Signal, SignalCluster, bv_to_bytes},
     config::{IlaConfig, IlaSignal},
     predicates::{IlaPredicate, PredicateOperation, PredicateTarget},
     ui::textinput::TextPromptState,
 };
 use bitvec::{
-    order::{Lsb0, Msb0},
-    vec::BitVec,
-    view::BitView,
+    field::BitField, order::{Lsb0, Msb0}, vec::BitVec, view::BitView
 };
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
 use num::{
@@ -404,18 +402,6 @@ impl State<'_> {
     /// An initial `IlaPredicate` configuration has to be provided to set the initial values within
     /// the UI. This UI will take up the entire screen
     pub fn new(ila: &IlaConfig, predicate: IlaPredicate) -> State {
-        /// Convert a BitVec into a vector of words
-        fn bitvec_to_words(v: &BitVec<u8, Msb0>) -> Vec<u32> {
-            v.chunks(32)
-                .map(|slice| {
-                    let mut word = 0;
-                    for bit in slice.iter() {
-                        word = (word << 1) | (*bit as u32);
-                    }
-                    word
-                })
-                .collect()
-        }
 
         /// Create the text prompts from a `SignalCluster`
         fn signals_to_prompts(data: SignalCluster) -> Vec<TextPromptState<()>> {
@@ -425,10 +411,10 @@ impl State<'_> {
                     signal
                         .samples
                         .first()
-                        .map(|sample| (bitvec_to_words(sample), signal.width))
+                        .map(|sample| (bv_to_bytes(sample), signal.width))
                 })
                 .map(|(v, width)| {
-                    BigInt::new(Sign::Plus, v).clamp(
+                    BigInt::from_bytes_be(Sign::Plus, &v).clamp(
                         BigInt::new(Sign::Plus, vec![0]),
                         BigInt::new(Sign::Plus, vec![2]).pow(width as u32)
                             - BigInt::new(Sign::Plus, vec![1]),
@@ -656,3 +642,4 @@ impl State<'_> {
         PredicateEventResponse::Nothing
     }
 }
+

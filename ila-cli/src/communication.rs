@@ -1,14 +1,29 @@
 use crate::cli::CommandOutput;
+use crate::cli_registers::IlaRegisters;
 use crate::config::IlaConfig;
 use crate::predicates::PredicateOperation;
 use crate::wishbone::WbTransaction;
-use crate::cli_registers::IlaRegisters;
+use bitvec::field::BitField;
 use bitvec::prelude::{BitVec, Msb0};
 use bitvec::slice::BitSlice;
 use bitvec::view::BitView;
 use num::BigUint;
 use std::io::{Read as IoRead, Result as IoResult, Write as IoWrite};
 use std::time::Duration;
+
+/// Convert a BitVec into a byte vector
+pub fn bv_to_bytes(v: &BitVec<u8, Msb0>) -> Vec<u8> {
+    let mut end = v.len();
+    let mut vec = vec![];
+    while end != 0 {
+        let start = end.saturating_sub(8);
+        let n: u8 = v[start..end].load_be();
+        vec.push(n);
+        end = end.saturating_sub(8);
+    }
+    vec.reverse();
+    vec
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ReadWrite<R, W> {
@@ -33,7 +48,7 @@ impl CommandOutput for Signal {
             .samples
             .iter()
             .map(|sample| {
-                let mut num = BigUint::from_bytes_be(&sample.clone().into_vec()).to_string();
+                let mut num = BigUint::from_bytes_be(&bv_to_bytes(sample)).to_string();
                 num.push(',');
                 num
             })
@@ -213,7 +228,8 @@ impl CommandOutput for bool {
         match self {
             true => "true",
             false => "false",
-        }.into()
+        }
+        .into()
     }
 }
 
@@ -388,7 +404,10 @@ impl IlaRegisters {
                 let words_per_index = ila.transaction_bit_count().div_ceil(32) as u32;
                 let buffer_indices = logical_indices
                     .iter()
-                    .flat_map(|index| (*index..*index + words_per_index).collect::<Vec<u32>>())
+                    .flat_map(|index| {
+                        (*index * words_per_index..*index * words_per_index + words_per_index)
+                            .collect::<Vec<u32>>()
+                    })
                     .collect();
                 WbTransaction::new_reads(byte_select, addr, buffer_indices)
             }
@@ -433,9 +452,7 @@ impl IlaRegisters {
             IlaRegisters::CaptureSelect(ReadWrite::Read(_)) => {
                 WbTransaction::new_reads(byte_select, addr, vec![0])
             }
-            IlaRegisters::SampleCount => {
-                WbTransaction::new_reads(byte_select, addr, vec![0])
-            }
+            IlaRegisters::SampleCount => WbTransaction::new_reads(byte_select, addr, vec![0]),
         }
     }
 }

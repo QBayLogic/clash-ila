@@ -1,7 +1,7 @@
 use num::BigUint;
 use serde::Serialize;
 
-use crate::communication::{Signal, SignalCluster};
+use crate::communication::{bv_to_bytes, Signal, SignalCluster};
 
 #[derive(Debug, Serialize)]
 pub struct ExportSignal {
@@ -16,7 +16,7 @@ impl From<Signal> for ExportSignal {
             name: value.name,
             width: value.width,
             samples: value.samples.into_iter().map(|sample| {
-                BigUint::from_bytes_be( &sample.into_vec()).to_string()
+                BigUint::from_bytes_be(&bv_to_bytes(&sample)).to_string()
             }).collect(),
         }
     }
