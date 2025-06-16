@@ -4,30 +4,24 @@
     nixpkgs.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
     flake-utils.url = "github:numtide/flake-utils";
     clash-compiler.url = "github:clash-lang/clash-compiler";
+    # Once this is merged; use official repo for clash-protocols
+    clash-protocols = {
+      url = "github:jaschutte/flakey-clash-protocols";
+      inputs.nixpkgs.follows = "nixpkgs";
+      inputs.clash-compiler.follows = "clash-compiler";
+    };
     ecpprog.url = "github:diegodiv/ecpprog";
   };
-  outputs = { nixpkgs, ecpprog, flake-utils, clash-compiler, ... }:
+  outputs = { nixpkgs, ecpprog, flake-utils, clash-compiler, clash-protocols, ... }:
     flake-utils.lib.eachDefaultSystem (system:
       let
         # Sources for things which do not yet have a flake
         non-flake-srcs = {
-          clash-protocols = pkgs.fetchFromGitHub {
-            owner = "clash-lang";
-            repo = "clash-protocols";
-            rev = "2ef336c2a0ca969cc5c8ad9cdb54cca5bd47f0bf";
-            hash = "sha256-sJX78AELxzV+y8GvqcLGvE1fWreWZMkhL18fdxsomjA=";
-          };
           clash-cores = pkgs.fetchFromGitHub {
             owner = "clash-lang";
             repo = "clash-cores";
             rev = "34fb54f80a89205640cdf1fdab678139493e097e";
             hash = "sha256-ZDxLDBLqlZ4OCORPb7pnT3Ini5LoZlKN58HoWFgeeWw=";
-          };
-          circuit-notation = pkgs.fetchFromGitHub {
-            owner = "cchalmers";
-            repo = "circuit-notation";
-            rev = "564769c52aa05b90f81bbc898b7af7087d96613d";
-            hash = "sha256-sPfLRjuMxqVRMzXrHRCuKKrdTdqgAJ33pf11DoTP84Q=";
           };
         };
 
@@ -38,20 +32,12 @@
           clash-lib = clash-compiler.packages.${system}.clash-lib;
           clash-ghc = clash-compiler.packages.${system}.clash-ghc;
 
+          circuit-notation = clash-protocols.packages.${system}.circuit-notation;
+          clash-protocols-base = clash-protocols.packages.${system}.clash-protocols-base;
+          clash-protocols = clash-protocols.packages.${system}.clash-protocols;
+
           string-interpolate = clash-input-pkgs.haskell.lib.doJailbreak (prev.string-interpolate);
 
-          circuit-notation = final.developPackage {
-            root = non-flake-srcs.circuit-notation.outPath;
-            overrides = overlay;
-          };
-          clash-protocols-base = final.developPackage {
-            root = "${non-flake-srcs.clash-protocols.outPath}/clash-protocols-base";
-            overrides = overlay;
-          };
-          clash-protocols = final.developPackage {
-            root = "${non-flake-srcs.clash-protocols.outPath}/clash-protocols";
-            overrides = overlay;
-          };
           clash-cores = final.developPackage {
             root = non-flake-srcs.clash-cores.outPath;
             overrides = overlay;
@@ -74,6 +60,7 @@
         pkgs = nixpkgs.legacyPackages.${system};
       in
       {
+        pkgs = hs-pkgs;
         devShells.default = hs-pkgs.shellFor {
           packages = p: [
             clash-ila

@@ -11,11 +11,11 @@
         "nixpkgs": "nixpkgs"
       },
       "locked": {
-        "lastModified": 1746866549,
-        "narHash": "sha256-lCqxy9lu+i+PML2i9B5ou84RpptQhExlxEPd3EgYydQ=",
+        "lastModified": 1750060564,
+        "narHash": "sha256-Hh7ia/T8+1U2/nMN5uXZNpZd8bFCHant5Hv9akJnHO0=",
         "owner": "clash-lang",
         "repo": "clash-compiler",
-        "rev": "0028df1578b459d81694860eaa0bd3c7f528cb95",
+        "rev": "713446d50a83aa7b49d45ce8a7dda2b04eba1fb1",
         "type": "github"
       },
       "original": {
@@ -24,9 +24,33 @@
         "type": "github"
       }
     },
+    "clash-protocols": {
+      "inputs": {
+        "clash-compiler": [
+          "clash-compiler"
+        ],
+        "flake-utils": "flake-utils_2",
+        "nixpkgs": [
+          "nixpkgs"
+        ]
+      },
+      "locked": {
+        "lastModified": 1750075805,
+        "narHash": "sha256-3bT+WWfdrQSHdZogFBqij54MQc6H2/z1EQPYS5OmleA=",
+        "owner": "jaschutte",
+        "repo": "flakey-clash-protocols",
+        "rev": "ee93357290ef9326da111e4f71a5225557d500c5",
+        "type": "github"
+      },
+      "original": {
+        "owner": "jaschutte",
+        "repo": "flakey-clash-protocols",
+        "type": "github"
+      }
+    },
     "ecpprog": {
       "inputs": {
-        "flake-utils": "flake-utils_2",
+        "flake-utils": "flake-utils_3",
         "nixpkgs": "nixpkgs_2"
       },
       "locked": {
@@ -82,6 +106,24 @@
         "systems": "systems_2"
       },
       "locked": {
+        "lastModified": 1731533236,
+        "narHash": "sha256-l0KFg5HjrsfsO/JpG+r7fRrqm12kzFHyUHqHCVpMMbI=",
+        "owner": "numtide",
+        "repo": "flake-utils",
+        "rev": "11707dc2f618dd54ca8739b309ec4fc024de578b",
+        "type": "github"
+      },
+      "original": {
+        "owner": "numtide",
+        "repo": "flake-utils",
+        "type": "github"
+      }
+    },
+    "flake-utils_3": {
+      "inputs": {
+        "systems": "systems_3"
+      },
+      "locked": {
         "lastModified": 1726560853,
         "narHash": "sha256-X6rJYSESBVr3hBoH0WbKE5KvhPU5bloyZ2L4K60/fPQ=",
         "owner": "numtide",
@@ -95,9 +137,9 @@
         "type": "github"
       }
     },
-    "flake-utils_3": {
+    "flake-utils_4": {
       "inputs": {
-        "systems": "systems_3"
+        "systems": "systems_4"
       },
       "locked": {
         "lastModified": 1731533236,
@@ -211,11 +253,11 @@
     },
     "nixpkgs_3": {
       "locked": {
-        "lastModified": 1748344075,
-        "narHash": "sha256-PsZAY3H0e/PBoDVn4fLwGEmeSwESj7SZPZ6CMfgbWFU=",
+        "lastModified": 1749903597,
+        "narHash": "sha256-jp0D4vzBcRKwNZwfY4BcWHemLGUs4JrS3X9w5k/JYDA=",
         "owner": "NixOS",
         "repo": "nixpkgs",
-        "rev": "e0042dedfbc9134ef973f64e5c7f56a38cc5cc97",
+        "rev": "41da1e3ea8e23e094e5e3eeb1e6b830468a7399e",
         "type": "github"
       },
       "original": {
@@ -228,8 +270,9 @@
     "root": {
       "inputs": {
         "clash-compiler": "clash-compiler",
+        "clash-protocols": "clash-protocols",
         "ecpprog": "ecpprog",
-        "flake-utils": "flake-utils_3",
+        "flake-utils": "flake-utils_4",
         "nixpkgs": "nixpkgs_3"
       }
     },
@@ -264,6 +307,21 @@
       }
     },
     "systems_3": {
+      "locked": {
+        "lastModified": 1681028828,
+        "narHash": "sha256-Vy1rq5AaRuLzOxct8nz4T6wlgyUR7zLU309k9mBC768=",
+        "owner": "nix-systems",
+        "repo": "default",
+        "rev": "da67096a3b9bf56a91d16901293e51ba5b49a27e",
+        "type": "github"
+      },
+      "original": {
+        "owner": "nix-systems",
+        "repo": "default",
+        "type": "github"
+      }
+    },
+    "systems_4": {
       "locked": {
         "lastModified": 1681028828,
         "narHash": "sha256-Vy1rq5AaRuLzOxct8nz4T6wlgyUR7zLU309k9mBC768=",
