@@ -313,7 +313,23 @@ impl<'a> TuiSession<'a> {
                         .log
                         .push("Unexpected output when reading buffer".to_string()),
                     Err(err) => self.log.push(format!("Error: {err}")),
-                }
+                };
+                KeyResponse::Nothing
+            }
+            (TuiState::Main, KeyCode::Char(' '), _) => {
+                let indices: Vec<u32> = (0_u32..self.config.buffer_size as u32).collect();
+                match perform_register_operation(
+                    tx_port,
+                    self.config,
+                    &IlaRegisters::Buffer(indices),
+                ) {
+                    Ok(RegisterOutput::BufferContent(cluster)) => self.captured.push(cluster),
+                    Ok(_) => self
+                        .log
+                        .push("Unexpected output when reading buffer".to_string()),
+                    Err(err) => self.log.push(format!("Error: {err}")),
+                };
+                KeyResponse::Nothing
             }
             (TuiState::Main, KeyCode::Char('t'), _) => {
                 self.state = TuiState::InPrompt(TextPromptState::new(
