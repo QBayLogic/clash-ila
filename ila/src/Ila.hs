@@ -487,7 +487,7 @@ ilaWb (IlaConfig @_ @a @depth @m depth initTriggerPoint ilaHash tracing predicat
           case readIlaMM wb.addr wb.busSelect rm of
             Just v -> v
             Nothing
-              | rm.shouldSample -> 0
+              | rm.shouldSample && not rm.freezeMode -> 0
               | otherwise -> bufValue
     readManager =
       mux

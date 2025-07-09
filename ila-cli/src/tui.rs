@@ -18,10 +18,8 @@ use ratatui::{
     *,
 };
 
-use crate::communication::{
-    perform_register_operation, RegisterOutput, SignalCluster,
-};
 use crate::cli_registers::IlaRegisters;
+use crate::communication::{perform_register_operation, RegisterOutput, SignalCluster};
 use crate::config::IlaConfig;
 use crate::predicates::IlaPredicate;
 use crate::predicates::PredicateTarget;
@@ -33,6 +31,7 @@ use crate::vcd::write_to_vcd;
 const KEYBIND_TEXT: &str = r#"  CTRL-c ---   Exit
   space  ---   Read samples (if triggered)
   t      ---   Change trigger point
+  m      ---   Enable live monitoring
   p      ---   Change trigger predicates
   c      ---   Change capture predicates
   r      ---   Re-arm trigger
@@ -91,10 +90,16 @@ pub struct TuiSession<'a> {
     captured: Vec<SignalCluster>,
     /// Checks if the predicate is triggered or not
     triggered: bool,
+    /// When enabled, continuous monitoring will repeadily request the latest samples from the ILA
+    /// and attempt to display then live
+    continuous: bool,
     /// The amount of samples currently stored in the buffer
     sample_count: u32,
     /// The time since the last triggered check has been performed
     last_trigger_check: Instant,
+    /// The last time the continuous file has been updated with the latest data
+    /// This should be done every second or so; to prevent viewers from crashing under fast reloads
+    last_continuous_update: Instant,
     /// If a configuration change has been made and this is set, it will rearm the trigger as well
     /// Otherwise it will only upload the new changes
     auto_reset: bool,
@@ -119,9 +124,11 @@ impl<'a> TuiSession<'a> {
             config,
             log: Vec::with_capacity(64),
             captured: vec![],
+            continuous: false,
             triggered: false,
             sample_count: 0,
             last_trigger_check: Instant::now(),
+            last_continuous_update: Instant::now(),
             auto_reset: false,
             device_path: device_path.display().to_string(),
         })
@@ -148,7 +155,7 @@ impl<'a> TuiSession<'a> {
             let info_layout = Layout::default()
                 .direction(layout::Direction::Vertical)
                 .margin(1)
-                .constraints([Constraint::Length(4), Constraint::Fill(1)])
+                .constraints([Constraint::Length(5), Constraint::Fill(1)])
                 .split(main_layout[1]);
 
             // Ensure the lines fit within the Paragraph's range
@@ -186,6 +193,13 @@ impl<'a> TuiSession<'a> {
                 Line::from_iter([
                     "Auto-rearm is ".into(),
                     match self.auto_reset {
+                        true => "ENABLED".bold().green(),
+                        false => "DISABLED".bold().red(),
+                    },
+                ]),
+                Line::from_iter([
+                    "Continuous monitoring is ".into(),
+                    match self.continuous {
                         true => "ENABLED".bold().green(),
                         false => "DISABLED".bold().red(),
                     },
@@ -267,6 +281,21 @@ impl<'a> TuiSession<'a> {
             }
             (TuiState::Main, KeyCode::Char('a'), _) => {
                 self.auto_reset = !self.auto_reset;
+                KeyResponse::Nothing
+            }
+            (TuiState::Main, KeyCode::Char('m'), _) => {
+                // TODO: make this toggleable instead of permanently setting it to true
+                match perform_register_operation(
+                    tx_port,
+                    self.config,
+                    &IlaRegisters::FreezeMode(crate::communication::ReadWrite::Write(!self.continuous as u32)),
+                ) {
+                    Ok(_) => {
+                        self.continuous = !self.continuous;
+                        self.captured.push(SignalCluster { cluster: vec![], timestamp: Duration::ZERO });
+                    }
+                    Err(_) => self.log.push("Failed to set ILA freeze mode".to_string()),
+                };
                 KeyResponse::Nothing
             }
             (TuiState::Main, KeyCode::Char(' '), _) => {
@@ -440,6 +469,24 @@ impl<'a> TuiSession<'a> {
         response
     }
 
+    pub fn continuous_loop<T: Read + Write>(&mut self, mut tx_port: T) {
+        let now = Instant::now();
+        if let Some(latest) = self.captured.last() {
+            if now.duration_since(self.last_continuous_update) >= Duration::from_secs(1) {
+                write_to_vcd(&latest, &self.config, "continuous.vcd");
+                self.last_continuous_update = now;
+            }
+        }
+
+        let Ok(RegisterOutput::BufferContent(mut cluster)) = perform_register_operation(&mut tx_port, self.config, &IlaRegisters::Buffer(vec![100])) else {
+            self.log.push("Failed to read buffer content".to_string());
+            return;
+        };
+        if let Some(latest) = self.captured.last_mut() {
+            latest.append(&mut cluster);
+        }
+    }
+
     /// The main TUI loop
     ///
     /// Handles everything from rendering to the input of the TUI interface
@@ -447,7 +494,14 @@ impl<'a> TuiSession<'a> {
         self.render();
 
         loop {
-            if let Ok(true) = poll(Duration::from_millis(100)) {
+            // If we continously want to monitor, we don't want to be bogged down by stdin,
+            // the continuous requests will provide enough timeout to not max CPU usage
+            let timeout_duration = match self.continuous {
+                true => Duration::from_millis(100),
+                false => Duration::ZERO,
+            };
+
+            if let Ok(true) = poll(timeout_duration) {
                 let raw_event = read();
                 let mut should_rearm = false;
 
@@ -501,6 +555,10 @@ impl<'a> TuiSession<'a> {
                     };
                     self.log.push(log_message.into())
                 }
+            }
+
+            if self.continuous {
+                self.continuous_loop(&mut tx_port);
             }
 
             let now = Instant::now();

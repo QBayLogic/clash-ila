@@ -85,6 +85,22 @@ impl CommandOutput for SignalCluster {
 }
 
 impl SignalCluster {
+    /// Merges two `SignalCluster`s together
+    ///
+    /// WARNING: this ASSUMES the indices are in the same order!
+    ///
+    /// WARNING: Do NOT merge two DIFFERENT clusters! They must be of the same set of signals
+    pub fn append(&mut self, other: &mut SignalCluster) {
+        if self.cluster.is_empty() {
+            self.cluster.append(&mut other.cluster);
+            return;
+        }
+
+        for (original, append) in self.cluster.iter_mut().zip(other.cluster.iter_mut()) {
+            original.samples.append(&mut append.samples);
+        }
+    }
+
     pub fn to_data(&self) -> Vec<u8> {
         let max_len = self
             .cluster
