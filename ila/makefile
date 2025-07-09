@@ -59,7 +59,7 @@ ${BUILDDIR}/02-hdl/${TOP}.v: top/${NAME}.hs dist-newstyle/packagedb src/*
 	echo
 	${CABAL} run clash -- \
 		-fplugin=Protocols.Plugin \
-		-package-env $(abspath .)/.ghc.environment.* \
+		-package-env $(abspath .)/../.ghc.environment.* \
 		--verilog \
 		-outputdir ${BUILDDIR}/01-clash \
 		$<
