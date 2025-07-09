@@ -35,16 +35,16 @@
         ]
       },
       "locked": {
-        "lastModified": 1750075805,
-        "narHash": "sha256-3bT+WWfdrQSHdZogFBqij54MQc6H2/z1EQPYS5OmleA=",
-        "owner": "jaschutte",
-        "repo": "flakey-clash-protocols",
-        "rev": "ee93357290ef9326da111e4f71a5225557d500c5",
+        "lastModified": 1751894924,
+        "narHash": "sha256-rRVVpjy9KQNDtATV4LQ1KadXKHiKqKp6OenAgabdW00=",
+        "owner": "clash-lang",
+        "repo": "clash-protocols",
+        "rev": "d8301af747c18ef61270ac5400d59be5f0234485",
         "type": "github"
       },
       "original": {
-        "owner": "jaschutte",
-        "repo": "flakey-clash-protocols",
+        "owner": "clash-lang",
+        "repo": "clash-protocols",
         "type": "github"
       }
     },

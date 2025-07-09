@@ -5,8 +5,7 @@
     flake-utils.url = "github:numtide/flake-utils";
     clash-compiler.url = "github:clash-lang/clash-compiler";
     clash-protocols = {
-      # Change this to be the official repository as soon as it gets merged
-      url = "github:jaschutte/flakey-clash-protocols";
+      url = "github:clash-lang/clash-protocols";
       inputs.nixpkgs.follows = "nixpkgs";
       inputs.clash-compiler.follows = "clash-compiler";
     };
