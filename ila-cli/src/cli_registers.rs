@@ -367,6 +367,9 @@ where
 pub enum RegisterSubcommand {
     /// Register containing the capture state of the ILA
     Capture(ReadWriteArgument<Unsupported, Unsupported>),
+    /// Register flag indicating that the buffer should replace old samples when the buffer is
+    /// filled
+    FreezeMode(ReadWriteArgument<Flag, Word>),
     /// Register re-arming the trigger (and clear the buffer)
     TriggerReset(ReadWriteArgument<Unsupported, Unsupported>),
     /// Checks the ILA for its triggered status

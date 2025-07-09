@@ -210,6 +210,7 @@ pub enum RegisterOutput {
     None,
     Capture(bool),
     TriggerState(bool),
+    FreezeMode(bool),
     BufferContent(SignalCluster),
     TriggerMask(SignalCluster),
     TriggerCompare(SignalCluster),
@@ -244,6 +245,7 @@ impl CommandOutput for RegisterOutput {
         match self {
             RegisterOutput::None => String::new(),
             RegisterOutput::Capture(state) => state.command_output(),
+            RegisterOutput::FreezeMode(state) => state.command_output(),
             RegisterOutput::TriggerState(state) => state.command_output(),
             RegisterOutput::BufferContent(signal_cluster) => signal_cluster.command_output(),
             RegisterOutput::TriggerMask(signal_cluster) => signal_cluster.command_output(),
@@ -267,6 +269,7 @@ impl IlaRegisters {
             IlaRegisters::Capture => (0x0000_0000, [false, false, false, true]),
             IlaRegisters::TriggerState => (0x0000_0000, [false, false, true, false]),
             IlaRegisters::TriggerReset => (0x0000_0000, [false, false, true, false]),
+            IlaRegisters::FreezeMode(_) => (0x0000_0000, [false, true, false, false]),
             IlaRegisters::TriggerPoint(_) => (0x0000_0001, [true; 4]),
             IlaRegisters::Buffer(_) => (0x3000_0000, [true; 4]),
             IlaRegisters::SampleCount => (0x0000_0007, [true; 4]),
@@ -291,6 +294,9 @@ impl IlaRegisters {
             IlaRegisters::Capture => RegisterOutput::Capture(matches!(output.first(), Some(1))),
             IlaRegisters::Buffer(_) => {
                 RegisterOutput::BufferContent(SignalCluster::from_data(ila, output))
+            }
+            IlaRegisters::FreezeMode(_) => {
+                RegisterOutput::FreezeMode(matches!(output.first(), Some(1)))
             }
             IlaRegisters::TriggerState => {
                 RegisterOutput::TriggerState(matches!(output.first(), Some(1)))
@@ -355,6 +361,12 @@ impl IlaRegisters {
         let (addr, byte_select) = self.address();
         match self {
             IlaRegisters::Capture => WbTransaction::new_reads(byte_select, addr, vec![0]),
+            IlaRegisters::FreezeMode(ReadWrite::Write(flag)) => {
+                WbTransaction::new_writes(byte_select, addr, vec![*flag])
+            }
+            IlaRegisters::FreezeMode(ReadWrite::Read(_)) => {
+                WbTransaction::new_reads(byte_select, addr, vec![0])
+            }
             IlaRegisters::TriggerState => WbTransaction::new_reads(byte_select, addr, vec![0]),
             IlaRegisters::TriggerReset => WbTransaction::new_writes(byte_select, addr, vec![1]),
             IlaRegisters::TriggerPoint(trig_point) => {

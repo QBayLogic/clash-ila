@@ -8,9 +8,8 @@
 module ConfigGen (
   -- | ILA configuration
   ilaConfig,
-  IlaConfig(..),
-  WithIlaConfig(..),
-
+  IlaConfig (..),
+  WithIlaConfig (..),
   -- | The default list of predicates
   ilaPredicateEq,
   ilaPredicateGt,
@@ -18,7 +17,6 @@ module ConfigGen (
   ilaPredicateTrue,
   ilaPredicateFalse,
   ilaDefaultPredicates,
-
   -- | Clash refuses to compile if these blackbox functions are not in scope
   writeSignalInfo,
   signalInfoBBF,
@@ -192,7 +190,8 @@ instance
       , predicates = fst <$> predicates
       }
    where
-    ilaHash = writeSignalInfo toplevel bufferDepth (fromGenSignal <$> signalInfos) (snd <$> predicates)
+    ilaHash =
+      writeSignalInfo toplevel bufferDepth (fromGenSignal <$> signalInfos) (snd <$> predicates)
 
 {- | General case
 For every pair of new set of `(Signal dom a, "name")`, bundle the signal and collect the name
@@ -235,15 +234,19 @@ side is an arbitary signal, and the right a string.
 -}
 ilaConfig ::
   forall dom a next.
-  ( NFDataX a
+  ( HiddenClockResetEnable dom
+  , NFDataX a
   , BitPack a
   , 1 <= BitSize a `DivRU` 32
-  , LabeledSignals ((Vec 1 GenSignal, Signal dom ((), a)) -> next)
+  , LabeledSignals ((Vec 2 GenSignal, Signal dom (Unsigned 36, a)) -> next)
   ) =>
   (Signal dom a, String) ->
   next
 ilaConfig (s :: (Signal dom a, String)) =
-  ilaProbe (Nil :: Vec 0 GenSignal, pure () :: Signal dom ()) s
+  ilaProbe (GenSignal{name = "clk", width = 36} :> Nil :: Vec 1 GenSignal, clk) s
+ where
+  clk :: Signal dom (Unsigned 36)
+  clk = register 0 $ satAdd SatWrap 1 <$> clk
 
 {- | Write metadata of signals to a json file, this metadata includes the width of the signal and a
 given label

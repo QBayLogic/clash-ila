@@ -179,6 +179,7 @@ A lot of the register map is also exposed as a memory map, with the following la
 |-------------|------------|-----------------------|-------------|
 | 0x0000_0000 | 0b0001     | Capture               | Read        |
 | 0x0000_0000 | 0b0010     | Trigger reset         | ReadWrite'1 |
+| 0x0000_0000 | 0b0100     | Freeze Mode           | ReadWrite   |
 | 0x0000_0001 | 0b1111     | Trigger point         | ReadWrite   |
 | 0x0000_0002 | 0b1111     | ILA hash              | Read        |
 | 0x0000_0003 | 0b0001     | ILA trigger operation | ReadWrite   |
@@ -199,8 +200,11 @@ data IlaRM bitSizeA depth n = IlaRM
   { capture :: Bool
   -- ^ If the ILA should be capturing signals
   , triggered :: Bool
-  , -- depending on the `triggerPoint` it may still be sampling new values.
-    triggerPoint :: Index depth
+  -- ^ depending on the `triggerPoint` it may still be sampling new values.
+  , freezeMode :: Bool
+  -- ^ When set to false, once the buffer is full it will stop capturing new samples, when set to
+  -- true it will replace old samples with new ones once the buffer is filled
+  , triggerPoint :: Index depth
   -- ^ The amount of signals to capture *after* triggering
   , shouldSample :: Bool
   -- ^ Indicates if the ILA should continue sampling data. This gets automatically set after the
@@ -254,6 +258,7 @@ readIlaMM ::
   Maybe (BitVector 32)
 readIlaMM 0x0000_0000 0b0001 rm = Just . extend $ pack rm.capture
 readIlaMM 0x0000_0000 0b0010 rm = Just . extend . pack $ not rm.shouldSample
+readIlaMM 0x0000_0000 0b0100 rm = Just . extend $ pack rm.freezeMode
 readIlaMM 0x0000_0001 0b1111 rm = Just . resize $ pack rm.triggerPoint
 readIlaMM 0x0000_0003 0b0001 rm = Just . resize $ pack rm.triggerOperation
 readIlaMM 0x0000_0004 0b1111 rm = Just rm.triggerSelect
@@ -315,6 +320,7 @@ writeIlaMM ::
   (IlaRM a depth n, IlaAction)
 writeIlaMM 0x0000_0000 0b0001 write rm = (rm{capture = unpack $ truncateB write}, None)
 writeIlaMM 0x0000_0000 0b0010 _write rm = (rm{triggered = False}, ResetTrigger)
+writeIlaMM 0x0000_0000 0b0100 write rm = (rm{freezeMode = unpack $ truncateB write}, None)
 writeIlaMM 0x0000_0001 0b1111 write rm = (rm{triggerPoint = unpack $ resize write}, None)
 writeIlaMM 0x0000_0003 0b0001 write rm = (rm{triggerOperation = unpack $ resize write}, None)
 writeIlaMM 0x0000_0004 0b1111 write rm = (rm{triggerSelect = write}, None)
@@ -360,6 +366,7 @@ ilaWb (IlaConfig @_ @a @depth @m depth initTriggerPoint ilaHash tracing predicat
       IlaRM
         { capture = False
         , triggered = False
+        , freezeMode = False
         , triggerPoint = initTriggerPoint
         , shouldSample = False
         , sampledAfterTrigger = 0
@@ -456,7 +463,7 @@ ilaWb (IlaConfig @_ @a @depth @m depth initTriggerPoint ilaHash tracing predicat
             depth
             ilaRM.capture
             delayedTrace
-            (not <$> ilaRM.shouldSample)
+            (not <$> (ilaRM.shouldSample .||. ilaRM.freezeMode))
             ((== ResetTrigger) <$> ilaAction)
         )
         fwdM2S
