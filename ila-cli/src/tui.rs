@@ -292,7 +292,7 @@ impl<'a> TuiSession<'a> {
                 ) {
                     Ok(_) => {
                         self.continuous = !self.continuous;
-                        self.captured.push(SignalCluster { cluster: vec![], timestamp: Duration::ZERO });
+                        self.captured.push(SignalCluster::new());
                     }
                     Err(_) => self.log.push("Failed to set ILA freeze mode".to_string()),
                 };

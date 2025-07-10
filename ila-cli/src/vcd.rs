@@ -1,7 +1,10 @@
 use std::{io::Result as IoResult, path::Path};
 use vcd::{IdCode, SimulationCommand, Value as VcdValue};
 
-use crate::{communication::{Signal, SignalCluster}, config::IlaConfig};
+use crate::{
+    communication::{Signal, SignalCluster},
+    config::IlaConfig,
+};
 
 type VcdWriter = vcd::Writer<std::io::BufWriter<std::fs::File>>;
 type VcdBitVec = Vec<VcdValue>;
@@ -23,8 +26,7 @@ impl VcdSignal {
     /// Sadly this function cannot be implemented using `Into` because it will directly write the
     /// signal definition to the file.
     fn from_vcd(vcd_writer: &mut VcdWriter, signal: &Signal) -> IoResult<VcdSignal> {
-        let wire =
-            vcd_writer.add_wire(signal.width as u32, &signal.name)?;
+        let wire = vcd_writer.add_wire(signal.width as u32, &signal.name)?;
 
         Ok(VcdSignal {
             wire,
@@ -61,7 +63,7 @@ pub fn write_to_vcd<P: AsRef<Path>>(
     let mut vcd_writer = vcd::Writer::new(std::io::BufWriter::new(file));
 
     // Header
-    vcd_writer.timescale(1, vcd::TimescaleUnit::US)?;
+    vcd_writer.timescale(1, vcd::TimescaleUnit::NS)?;
     vcd_writer.add_module(&config.toplevel)?;
     let wires: Vec<VcdSignal> = signals
         .cluster
@@ -86,8 +88,16 @@ pub fn write_to_vcd<P: AsRef<Path>>(
         .max()
         .ok_or(std::io::ErrorKind::InvalidData)?;
 
+    let base_time = match &signals.clock {
+        Some(clk) => *clk.first().unwrap_or(&0),
+        None => 0,
+    };
     for t in 0..max_sample_count {
-        vcd_writer.timestamp(t as u64)?;
+        if let Some(clock) = &signals.clock {
+            let time = (*clock.get(t).unwrap_or(&(t as u64)) - base_time) as f64;
+            let time_ps = (1.0 / (config.frequency as f64) * time * 1e9) as u64;
+            vcd_writer.timestamp(time_ps)?;
+        }
 
         for signal in &wires {
             let current_vector = signal.data.get(t).unwrap_or(&signal.unknown).to_owned();

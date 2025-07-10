@@ -245,6 +245,11 @@ impl PredicatePage for MaskComparePage {
 
         let base_area = layout[3];
         for (index, signal) in state.signals.iter().enumerate() {
+            // The last is the clock signal, for which we do not want to render any predicate for
+            if index == state.signals.len() - 1 {
+                continue;
+            }
+
             let element_active = index == state.mask_compare_cursor_position;
 
             let mut max_bound = BigInt::new(Sign::Plus, vec![2]).pow(signal.width as u32);
@@ -596,14 +601,8 @@ impl State<'_> {
                     target: self.target,
                     operation,
                     predicate_select: selected,
-                    mask: SignalCluster {
-                        cluster: mask,
-                        timestamp: Duration::ZERO,
-                    },
-                    compare: SignalCluster {
-                        cluster: compare,
-                        timestamp: Duration::ZERO,
-                    },
+                    mask: SignalCluster::from_signals(mask),
+                    compare: SignalCluster::from_signals(compare),
                 };
 
                 let response = match predicate.update_ila(medium, ila) {

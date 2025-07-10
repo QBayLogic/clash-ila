@@ -9,7 +9,8 @@ use bitvec::slice::BitSlice;
 use bitvec::view::BitView;
 use num::BigUint;
 use std::io::{Read as IoRead, Result as IoResult, Write as IoWrite};
-use std::time::Duration;
+use std::iter;
+use std::time::Instant;
 
 /// Convert a BitVec into a byte vector
 pub fn bv_to_bytes(v: &BitVec<u8, Msb0>) -> Vec<u8> {
@@ -65,7 +66,8 @@ impl CommandOutput for Signal {
 #[allow(unused)]
 pub struct SignalCluster {
     pub cluster: Vec<Signal>,
-    pub timestamp: Duration,
+    pub clock: Option<Vec<u64>>,
+    pub timestamp: Instant,
 }
 
 impl CommandOutput for SignalCluster {
@@ -85,6 +87,39 @@ impl CommandOutput for SignalCluster {
 }
 
 impl SignalCluster {
+    pub fn new() -> SignalCluster {
+        SignalCluster {
+            cluster: vec![],
+            clock: None,
+            timestamp: Instant::now(),
+        }
+    }
+
+    pub fn from_signals(signals: Vec<Signal>) -> SignalCluster {
+        SignalCluster {
+            cluster: signals,
+            clock: None,
+            timestamp: Instant::now(),
+        }
+    }
+
+    // pub fn get_clock_signal(&self) -> Option<Vec<u64>> {
+    //     self.cluster
+    //         .iter()
+    //         .find(|signal| signal.name == "clk")
+    //         .map(|clk_signal| {
+    //             clk_signal
+    //                 .samples
+    //                 .iter()
+    //                 .map(|timestamp| {
+    //                     timestamp.iter().fold(0, |acc, bit| {
+    //                         (acc << 1) + bit.then_some(1).unwrap_or(0) as u64
+    //                     })
+    //                 })
+    //                 .collect()
+    //         })
+    // }
+
     /// Merges two `SignalCluster`s together
     ///
     /// WARNING: this ASSUMES the indices are in the same order!
@@ -93,8 +128,14 @@ impl SignalCluster {
     pub fn append(&mut self, other: &mut SignalCluster) {
         if self.cluster.is_empty() {
             self.cluster.append(&mut other.cluster);
+            self.clock = other.clock.clone();
+
             return;
         }
+
+        if let (Some(original), Some(clk)) = (&mut self.clock, &mut other.clock) {
+            original.append(clk);
+        };
 
         for (original, append) in self.cluster.iter_mut().zip(other.cluster.iter_mut()) {
             original.samples.append(&mut append.samples);
@@ -118,6 +159,19 @@ impl SignalCluster {
                 let mut combined = self
                     .cluster
                     .iter()
+                    // The ILA still expects the clk signal to be there, so we set it to zero
+                    .chain(iter::once(&Signal {
+                        name: "clk".to_string(),
+                        width: 34,
+                        samples: vec![
+                            {
+                                let mut bv = BitVec::new();
+                                bv.resize(34, false);
+                                bv
+                            };
+                            max_len
+                        ],
+                    }))
                     .rev()
                     .map(|signal| signal.samples.get(index).cloned().unwrap_or(BitVec::EMPTY))
                     .fold(BitVec::<u8, Msb0>::EMPTY, |mut acc, bv| {
@@ -174,50 +228,41 @@ impl SignalCluster {
             }
         }
 
+        // For ease at writing to a file, we split off the clock signal each buffer transfer is
+        // bundled with. This does mean we have to re-introduce the clock signal if we want to send
+        // signal data back to the ILA (for predicates). However we want the clock to be 0 for
+        // those cases anyways so this works out great
+        let (clock, signals) = if let Some((index, clock)) = signals
+            .iter()
+            .enumerate()
+            .find(|(_, signal)| signal.name == "clk")
+            .map(|(index, clk_signal)| {
+                (
+                    index,
+                    clk_signal
+                        .samples
+                        .iter()
+                        .map(|timestamp| {
+                            timestamp.iter().fold(0, |acc, bit| {
+                                (acc << 1) + bit.then_some(1).unwrap_or(0) as u64
+                            })
+                        })
+                        .collect(),
+                )
+            }) {
+            signals.remove(index);
+            (Some(clock), signals)
+        } else {
+            (None, signals)
+        };
+
         SignalCluster {
             cluster: signals,
-            timestamp: Duration::ZERO,
+            clock,
+            timestamp: Instant::now(),
         }
     }
 }
-
-// /// An enum for operating on different registers on the ILA, without having to know the explicit
-// /// address.
-// #[derive(Debug, Clone, PartialEq, Eq)]
-// #[allow(unused)]
-// pub enum IlaRegisters {
-//     /// Register controlling wether or not to capture samples
-//     Capture,
-//     /// Register re-arming the trigger (and clear the buffer)
-//     TriggerReset,
-//     /// Checks the ILA for it's triggered status
-//     TriggerState,
-//     /// Register controlling how many samples it should store after triggering
-//     TriggerPoint(u32),
-//     /// The value to mask the samples against before triggering
-//     TriggerMask(ReadWrite<u32, Vec<u8>>),
-//     /// The value used by the trigger to compare samples against, if it is set to do so
-//     TriggerCompare(ReadWrite<u32, Vec<u8>>),
-//     /// How the trigger should handle mutliple predicates
-//     TriggerOp(ReadWrite<(), PredicateOperation>),
-//     /// Which predicates are active for the trigger
-//     TriggerSelect(ReadWrite<(), u32>),
-//     /// Read out samples from the ILA buffer, each vector item is an index within the buffer
-//     Buffer(Vec<u32>),
-//     /// Read the hash of the ILA, can be used to check if the current instantiated ILA is
-//     /// out-of-date
-//     Hash(u32),
-//     /// The value to mask samples before being fed to the capture predicates
-//     CaptureMask(ReadWrite<u32, Vec<u8>>),
-//     /// The value used by the capture predicates to compare samples against, if it is set to do so
-//     CaptureCompare(ReadWrite<u32, Vec<u8>>),
-//     /// How the capture should handle mutliple predicates
-//     CaptureOp(ReadWrite<(), PredicateOperation>),
-//     /// Which predicates are active for the capture
-//     CaptureSelect(ReadWrite<(), u32>),
-//     /// The amount of samples current stored in the buffer
-//     SampleCount,
-// }
 
 /// Output of the register whenever a read operation is performed on the ILA.
 #[allow(unused)]
