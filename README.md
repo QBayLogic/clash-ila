@@ -20,13 +20,11 @@ will need to compile it yourself. For instructions on how to compile the ila-cli
 
 In your cabal.project file, include the following lines:
 
-In your cabal.project file, include the following lines:
-
 ```
 source-repository-package
   type: git
   location: https://github.com/QBayLogic/clash-ila.git
-  tag: f196afecba0ab43e0e9f4d3f4219be213835162a
+  tag: 7991faa06971eea68550e43f774a2bf42fe143ed
   subdir: ila
 ```
 
@@ -34,6 +32,55 @@ Then include the `clash-ila` package in your dependencies in `<yourproject>.caba
 
 On the next compilation of your Clash project, it should fetch the project from Github and make it
 available to use in your project.
+
+### Nix
+
+Alternatively, Nix can be used to include the ILA within your project. Simply add the repository to
+your Nix flake inputs. Make sure to make override the clash-compiler input to your clash-compiler.
+
+Example flake:
+
+```nix
+inputs = {
+  clash-compiler.url = "github:clash-lang/clash-compiler"
+  clash-ila = {
+    url = "github:qbaylogic/clash-ila/library"
+    inputs.clash-compiler.follows = "clash-compiler";
+  };
+};
+outputs = { clash-compiler, clash-ila, ... }:
+  let
+    # The GHC version you would like to use
+    # This has to be be one of the supported versions of clash-compiler
+    compiler-version = "ghc9101";
+
+    # Import the normal and Haskell package set from clash-compiler
+    pkgs = (import clash-compiler.inputs.nixpkgs {
+      inherit system;
+    }).extend clash-compiler.overlays.${compiler-version};
+    clash-pkgs = pkgs."clashPackages-${compiler-version}";
+
+    # Define your Haskell package
+    overlay = final: prev: {
+      # Add the clash-ila to your project
+      clash-ila = clash-ila.packages.${system}.clash-ila;
+
+      # Your haskell package here
+      my-package = prev.developPackage {
+        root = ./my-source;
+        overrides = _: _: final;
+      };
+    };
+
+    # The final Haskell package set, containing your project as well as all Clash dependencies
+    hs-pkgs = clash-pkgs.extend overlay;
+  in
+  {
+    packages.default = hs-pkgs.my-package;
+  }
+```
+
+You can also run the ILA-CLI with Nix, by typing `nix run github:qbaylogic/clash-ila/library`.
 
 ## Usage
 
@@ -248,7 +295,7 @@ and repeat.
 
 The ILA has the ability to change the predicates it uses to control the capture and trigger signals.
 This is done in the Predicate configuration page. To get to this page, simply press `p` on the main
-page (to configure the trigger predicates) or `a` (to configure capture predicates). Both pages are
+page (to configure the trigger predicates) or `c` (to configure capture predicates). Both pages are
 identical aside from the predicates it is configuring.
 
 Nagivating the different pages can be done with CTRL-LEFT and CTRL-RIGHT. Exiting can be done using
@@ -264,6 +311,10 @@ one of the predicates is (OR).
 The next page is about masks, in here you can define a mask to filter certain bits on the predicate.
 The compare page follows a similar layout, where you can define a value for the predicates to compare
 incoming data too.
+
+By default, no masking is done. Most likely you want to isolate a singular signal. To achieve that
+simply set the masking bits of the signals you don't want to test to zero. Then, on the compare page
+set the compare value of the signal to the value you want the predicate to test against.
 
 ```
  General │ Mask │ Compare
