@@ -2,66 +2,49 @@
   description = "A flake enabling tooling for clash-formal-playground";
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
-    flake-utils.url = "github:numtide/flake-utils";
     clash-compiler.url = "github:clash-lang/clash-compiler";
-    clash-protocols = {
-      url = "github:clash-lang/clash-protocols";
-      inputs.nixpkgs.follows = "nixpkgs";
+    clash-cores = {
+      url = "github:jaschutte/clash-cores";
       inputs.clash-compiler.follows = "clash-compiler";
     };
     ecpprog.url = "github:diegodiv/ecpprog";
   };
-  outputs = { nixpkgs, ecpprog, flake-utils, clash-compiler, clash-protocols, ... }:
+  outputs = { nixpkgs, ecpprog, flake-utils, clash-compiler, clash-cores, ... }:
     flake-utils.lib.eachDefaultSystem (system:
       let
-        # Sources for things which do not yet have a flake
-        non-flake-srcs = {
-          clash-cores = pkgs.fetchFromGitHub {
-            owner = "clash-lang";
-            repo = "clash-cores";
-            rev = "34fb54f80a89205640cdf1fdab678139493e097e";
-            hash = "sha256-ZDxLDBLqlZ4OCORPb7pnT3Ini5LoZlKN58HoWFgeeWw=";
-          };
+        # The GHC version you would like to use
+        # This has to be be one of the supported versions of clash-compiler
+        compiler-version = "ghc9101";
+
+        pkgs = import nixpkgs {
+          inherit system;
         };
+
+        # Import the normal and Haskell package set from clash-compiler
+        clash-pkgs = ((import clash-compiler.inputs.nixpkgs {
+          inherit system;
+        }).extend clash-compiler.overlays.${compiler-version})."clashPackages-${compiler-version}";
 
         # Patch programs to be the correct version we want
         overlay = final: prev: {
-          clash-prelude = clash-compiler.packages.${system}.clash-prelude;
-          clash-prelude-hedgehog = clash-compiler.packages.${system}.clash-prelude-hedgehog;
-          clash-lib = clash-compiler.packages.${system}.clash-lib;
-          clash-ghc = clash-compiler.packages.${system}.clash-ghc;
-
-          circuit-notation = clash-protocols.packages.${system}.circuit-notation;
-          clash-protocols-base = clash-protocols.packages.${system}.clash-protocols-base;
-          clash-protocols = clash-protocols.packages.${system}.clash-protocols;
-
-          string-interpolate = clash-input-pkgs.haskell.lib.doJailbreak (prev.string-interpolate);
-
-          clash-cores = final.developPackage {
-            root = non-flake-srcs.clash-cores.outPath;
-            overrides = overlay;
+          clash-ila = prev.developPackage {
+            root = ./ila;
+            overrides = _: _: final;
           };
-        };
-        clash-input-pkgs = clash-compiler.inputs.nixpkgs.legacyPackages.${system};
-        hs-pkgs = clash-input-pkgs.haskell.packages.ghc910.extend overlay;
+        } // clash-cores.overlays.${system}.default final prev;
 
-        # Packages built by this repository
-        clash-ila = hs-pkgs.developPackage {
-          root = ./ila;
-          overrides = overlay;
-        };
         ila-cli = import ./ila-cli/Cargo.nix {
           nixpkgs = nixpkgs;
           pkgs = pkgs;
         };
 
         # General packages from nixpkgs
-        pkgs = nixpkgs.legacyPackages.${system};
+        hs-pkgs = clash-pkgs.extend overlay;
       in
       {
         devShells.default = hs-pkgs.shellFor {
           packages = p: [
-            clash-ila
+            p.clash-ila
           ];
 
           nativeBuildInputs = 
@@ -90,10 +73,10 @@
           ;
         };
         packages = {
-          clash-ila = clash-ila;
+          clash-ila = hs-pkgs.clash-ila;
           ila-cli = ila-cli;
 
-          default = clash-ila;
+          default = hs-pkgs.clash-ila;
         };
         apps.default = {
           type = "app";
