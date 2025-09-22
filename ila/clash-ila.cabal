@@ -67,7 +67,7 @@ executable clash
     base,
     clash-ghc,
     clash-ila,
-    blink
+    examples
 
 library
   import: common-options
@@ -75,8 +75,6 @@ library
   exposed-modules:
     SignalFieldSelectors
     Domain
-    Pmod
-    RGB
     RingBuffer
     Ila
     Communication
@@ -94,11 +92,11 @@ test-suite unittests
     Tests.RingBuffer
     Tests.Communication
 
-library blink
+library examples
   import: common-options
-  hs-source-dirs: top
+  hs-source-dirs: examples
   build-depends:
     clash-ila
   exposed-modules:
-    Blink
+    ClashIlaDemo
 

@@ -5,7 +5,7 @@
 {-# OPTIONS_GHC -fconstraint-solver-iterations=10 #-}
 {-# OPTIONS_GHC -fplugin=Protocols.Plugin #-}
 
-module Blink where
+module ClashIlaDemo where
 
 import Clash.Annotations.TH
 import Clash.Cores.UART (ValidBaud)
@@ -15,8 +15,6 @@ import ConfigGen
 import Domain
 import Ila
 import Protocols
-
-
 
 -- | Simple UART ILA demonstration
 topLogicUart ::
@@ -28,7 +26,7 @@ topLogicUart ::
   Signal dom Bit ->
   -- | Leds
   Signal dom Bit
-topLogicUart baud rx = go
+topLogicUart baud rx = tx
  where
   -- Simple demo signal to 'debug'
   counter0 :: (HiddenClockResetEnable dom) => Signal dom (Unsigned 36)
@@ -41,20 +39,22 @@ topLogicUart baud rx = go
   Circuit demoIla = ilaUart
     baud
     $ ilaConfig
+      -- Provide as many signals (& their names) you would like to debug
       (counter0, "+1")
       (counter1, "+4")
       (counter2, "+3")
+      -- Finalize the ILA by giving it a configuration
       WithIlaConfig
         { bufferDepth = d100
+        -- ^ Amount of samples to store
         , name = "Simple_Demo"
+        -- ^ The name displayed in the waveform viewer
         , triggerPoint = 0
+        -- ^ Amount of samples in the buffer after trigger
         , predicates = ilaDefaultPredicates
+        -- ^ The list of predicates to select from during runtime
         }
-  txBit = snd $ demoIla (rx, (pure ()))
-
-  go = txBit
-
-
+  tx = snd $ demoIla (rx, (pure ()))
 
 -- | The top entity
 topEntity ::
