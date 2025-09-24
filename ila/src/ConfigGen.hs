@@ -18,6 +18,10 @@ module ConfigGen (
   ilaPredicateTrue,
   ilaPredicateFalse,
   ilaDefaultPredicates,
+  -- | Types for custom predicates
+  Predicate,
+  NamedPredicate,
+
 
   -- | Clash refuses to compile if these blackbox functions are not in scope
   writeSignalInfo,
