@@ -1,33 +1,50 @@
-
 { 
-  nixConfig.extra-substituters = [ "http://warnsveld" ];
-  nixConfig.extra-trusted-public-keys = [ "warnsveld:kt+WouF9QqWCs9tmRt+05V21V575togaM8/MFtaKeCg=" ];
-
   description = "A flake enabling tooling for clash-formal-playground";
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
-    flake-utils.url = "github:numtide/flake-utils";
     clash-compiler.url = "github:clash-lang/clash-compiler";
+    clash-cores = {
+      url = "github:jaschutte/clash-cores";
+      inputs.clash-compiler.follows = "clash-compiler";
+    };
     ecpprog.url = "github:diegodiv/ecpprog";
   };
-  outputs = { nixpkgs, ecpprog, flake-utils, clash-compiler, ... }:
+  outputs = { nixpkgs, ecpprog, flake-utils, clash-compiler, clash-cores, ... }:
     flake-utils.lib.eachDefaultSystem (system:
       let
-        overlay = final: prev: {
-          clash-cores = clash-compiler.packages.${system}.clash-cores;
-          clash-prelude = clash-compiler.packages.${system}.clash-prelude;
-          clash-lib = clash-compiler.packages.${system}.clash-lib;
-          clash-ghc = clash-compiler.packages.${system}.clash-ghc;
-          cabal-install = nixpkgs.legacyPackages.${system}.cabal-install;
+        # The GHC version you would like to use
+        # This has to be be one of the supported versions of clash-compiler
+        compiler-version = "ghc9101";
+
+        pkgs = import nixpkgs {
+          inherit system;
         };
-        pkgs = clash-compiler.inputs.nixpkgs.legacyPackages.${system};
-        hsPkgs = pkgs.haskell.packages.ghc910.extend (overlay);
+
+        # Import the normal and Haskell package set from clash-compiler
+        clash-pkgs = ((import clash-compiler.inputs.nixpkgs {
+          inherit system;
+        }).extend clash-compiler.overlays.${compiler-version})."clashPackages-${compiler-version}";
+
+        # Patch programs to be the correct version we want
+        overlay = final: prev: {
+          clash-ila = prev.developPackage {
+            root = ./ila;
+            overrides = _: _: final;
+          };
+        } // clash-cores.overlays.${system}.default final prev;
+
+        ila-cli = import ./ila-cli/Cargo.nix {
+          nixpkgs = nixpkgs;
+          pkgs = pkgs;
+        };
+
+        # General packages from nixpkgs
+        hs-pkgs = clash-pkgs.extend overlay;
       in
       {
-        devShells.default = pkgs.mkShell {
-          inputsFrom = [
-            clash-compiler.packages.${system}.clash-lib.env
-            clash-compiler.packages.${system}.clash-ghc.env
+        devShells.default = hs-pkgs.shellFor {
+          packages = p: [
+            p.clash-ila
           ];
 
           nativeBuildInputs = 
@@ -39,24 +56,31 @@
               pkgs.gnumake
 
               # Haskell stuff
-              hsPkgs.cabal-install
-              hsPkgs.haskell-language-server
+              hs-pkgs.cabal-install
+              hs-pkgs.haskell-language-server
 
               # Rust subproject
               pkgs.cargo
               pkgs.rustc
               pkgs.clippy
-              # Required as we depend on libudev for tty iteration
-              pkgs.pkg-config
-              pkgs.udev
 
               # Surfer to view VCD
               pkgs.surfer
 
-              # Idk
+              # Program the FPGA
               ecpprog.defaultPackage.${system}
             ]
           ;
+        };
+        packages = {
+          clash-ila = hs-pkgs.clash-ila;
+          ila-cli = ila-cli;
+
+          default = hs-pkgs.clash-ila;
+        };
+        apps.default = {
+          type = "app";
+          program = "${ila-cli.rootCrate.build}/bin/ila-cli";
         };
       });
 }

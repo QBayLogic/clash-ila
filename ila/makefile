@@ -2,7 +2,7 @@
 #   Project Settings                                                           #
 ##----------------------------------------------------------------------------##
 
-NAME = Blink
+NAME = ClashIlaDemo
 TOP = topEntity
 BUILDDIR= _build
 PNR_FLAGS= \
@@ -11,7 +11,6 @@ PNR_FLAGS= \
 	--lpf orangecrab.pcf \
 
 -include build.cfg
--include build.cfg.local
 
 ##----------------------------------------------------------------------------##
 #   Build Rules                                                                #
@@ -23,7 +22,7 @@ test:
 	${CABAL} test
 
 repl:
-	${CABAL} run clash-proxy:clash -- --interactive
+	${CABAL} run clash -- --interactive
 
 upload: ${BUILDDIR}/04-bitstream/${TOP}.bit
 	${PROG} -S $<
@@ -53,11 +52,10 @@ ${BUILDDIR}/03-net/$(TOP).json: ${BUILDDIR}/02-hdl/${TOP}.v
 		-l ${BUILDDIR}/log/synth.log \
 		-p 'read_verilog $(dir $^)/*.v; synth_ecp5 -top $(TOP) -json $@'
 
-${BUILDDIR}/02-hdl/${TOP}.v: top/${NAME}.hs dist-newstyle/packagedb src/*
-	${CABAL} build orangecrab:${NAME}
+${BUILDDIR}/02-hdl/${TOP}.v: examples/${NAME}.hs $(abspath ..)/.ghc.environment.% src/*
 	mkdir -p ${BUILDDIR}/01-clash
-	echo
-	${CABAL} run clash-proxy:clash -- \
+	${CABAL} build clash-ila:${NAME} --write-ghc-environment-files=always
+	${CABAL} run clash -- \
 		-fplugin=Protocols.Plugin \
 		-package-env $(abspath ..)/.ghc.environment.* \
 		--verilog \
@@ -66,8 +64,8 @@ ${BUILDDIR}/02-hdl/${TOP}.v: top/${NAME}.hs dist-newstyle/packagedb src/*
 	rm -Rf ${BUILDDIR}/02-hdl
 	mv ${BUILDDIR}/01-clash/${NAME}.topEntity ${BUILDDIR}/02-hdl
 
-dist-newstyle/packagedb:
-	${CABAL} build
+$(abspath ..)/.ghc.environment.%:
+	${CABAL} build clash-ila:${NAME} --write-ghc-environment-files=always
 
 ##----------------------------------------------------------------------------##
 #   Cleanup                                                                    #
@@ -80,6 +78,6 @@ clean:
 #   Special Targets                                                            #
 ##----------------------------------------------------------------------------##
 
-.PHONY: clean nano4k upload nano4k-upload
+.PHONY: test repl upload hdl synth netlist bitstream
 .SECONDARY:
 .SILENT:

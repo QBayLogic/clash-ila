@@ -34,7 +34,7 @@ uartDf baud = Circuit exposeIn
  where
   exposeIn ((transmit, rxBit), _) = out
    where
-    (recieved, txBit, acked) = uart baud rxBit (Df.dataToMaybe <$> transmit)
+    (recieved, txBit, acked) = uart baud rxBit transmit
 
     out =
       ( (Ack <$> acked, pure ())
@@ -55,12 +55,12 @@ holdUntilAck = Circuit exposeIn
  where
   exposeIn (incoming, ack) = out
    where
-    hold :: (Signal dom (Df.Data (BitVector 8)))
+    hold :: (Signal dom (Maybe (BitVector 8)))
     hold =
-      register Df.NoData $
+      register Nothing $
         mux
-          (ackToBool <$> ack .||. Df.noData <$> hold)
-          (Df.maybeToData <$> incoming)
+          (ackToBool <$> ack .||. DM.isNothing <$> hold)
+          incoming
           hold
 
     -- I'm honestly surprised that this isn't a thing already
@@ -102,9 +102,9 @@ ps2df = Circuit exposeIn <| downConverterC @1
  where
   exposeIn (incoming, backpressure) = out
    where
-    toDf :: Maybe (PacketStreamM2S 1 ()) -> Df.Data (BitVector 8)
-    toDf (Just packet) = Df.Data $ at d0 (_data packet)
-    toDf Nothing = Df.NoData
+    toDf :: Maybe (PacketStreamM2S 1 ()) -> Maybe (BitVector 8)
+    toDf (Just packet) = Just $ at d0 (_data packet)
+    toDf Nothing = Nothing
 
     ack2ps :: Ack -> PacketStreamS2M
     ack2ps (Ack b) = PacketStreamS2M b
@@ -197,27 +197,27 @@ etherboneDfPacketizer = upConverterC @2 @2 <| Circuit exposeIn <| Df.compressor 
 
     transfer' ::
       DepacketizeDfState ->
-      Df.Data (Vec 2 (BitVector 8)) ->
+      Maybe (Vec 2 (BitVector 8)) ->
       (DepacketizeDfState, Maybe (PacketStreamM2S 2 ()))
-    transfer' EBMagic (Df.Data word@(0x4e :> 0x6f :> Nil)) = (EBHeader maxBound, partialPs word)
+    transfer' EBMagic (Just word@(0x4e :> 0x6f :> Nil)) = (EBHeader maxBound, partialPs word)
     transfer' EBMagic _ = (EBMagic, Nothing) -- Silently drop packets if they're not part of etherbone
-    transfer' (EBHeader n) (Df.Data word)
+    transfer' (EBHeader n) (Just word)
       | n == 0 = (EBRecord maxBound, partialPs word)
       | otherwise = (EBHeader (n - 1), partialPs word)
-    transfer' (EBRecord n) (Df.Data word)
+    transfer' (EBRecord n) (Just word)
       | n == 0 && getLength word == 0 = (EBMagic, completePS word)
       | n == 0 = (EBBody (getLength word, maxBound), partialPs word)
       | otherwise = (EBRecord (n - 1), partialPs word)
-    transfer' (EBBody (n, w)) (Df.Data word)
+    transfer' (EBBody (n, w)) (Just word)
       | n == 0 && w == 0 = (EBMagic, completePS word)
       | w == 0 = (EBBody (n - 1, maxBound), partialPs word)
       | otherwise = (EBBody (n, w - 1), partialPs word)
     -- When we receive no data, keep the current state
-    transfer' state Df.NoData = (state, Nothing)
+    transfer' state Nothing = (state, Nothing)
 
     transfer ::
       DepacketizeDfState ->
-      (PacketStreamS2M, Df.Data (Vec 2 (BitVector 8))) ->
+      (PacketStreamS2M, Maybe (Vec 2 (BitVector 8))) ->
       (DepacketizeDfState, Maybe (PacketStreamM2S 2 ()))
     transfer state (bwdData, fwdData)
       -- \| _ready bwdData = trace [__i|#{state} with #{fwdData} -> #{transfer' state fwdData}|] $ transfer' state fwdData

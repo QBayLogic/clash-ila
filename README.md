@@ -1,1 +1,403 @@
-# clash-ila
+
+# ILA Manual
+
+## What is this?
+
+The Clash-ILA is a integrated Logic Analyzer (ILA) written in pure clash. The primary goal of this
+project is to make ILAs accessable to any (Clash) FPGA project by developing an platform independent
+ILA in Clash.
+
+## Installation
+
+The Clash integrated logic analyzer (ILA) consists out of two parts. The computer side (the ila-cli)
+and a Haskell package containing the synthesisable ILA.
+
+To start, go to https://github.com/QBayLogic/clash-ila
+To install the ila-cli, simply head to the downloads page and download the latest version of the
+ila-cli. NOTE: these downloads are only available for x86 Linux. For other operating systems, you
+will need to compile it yourself. For instructions on how to compile the ila-cli, go to **Compilation
+& Development** chapter.
+
+In your cabal.project file, include the following lines:
+
+```
+source-repository-package
+  type: git
+  location: https://github.com/QBayLogic/clash-ila.git
+  tag: 7991faa06971eea68550e43f774a2bf42fe143ed
+  subdir: ila
+```
+
+Then include the `clash-ila` package in your dependencies in `<yourproject>.cabal`.
+
+On the next compilation of your Clash project, it should fetch the project from Github and make it
+available to use in your project.
+
+### Nix
+
+Alternatively, Nix can be used to include the ILA within your project. Simply add the repository to
+your Nix flake inputs. Make sure to make override the clash-compiler input to your clash-compiler.
+
+Example flake:
+
+```nix
+inputs = {
+  clash-compiler.url = "github:clash-lang/clash-compiler"
+  clash-ila = {
+    url = "github:qbaylogic/clash-ila/library"
+    inputs.clash-compiler.follows = "clash-compiler";
+  };
+};
+outputs = { clash-compiler, clash-ila, ... }:
+  let
+    # The GHC version you would like to use
+    # This has to be be one of the supported versions of clash-compiler
+    compiler-version = "ghc9101";
+
+    # Import the normal and Haskell package set from clash-compiler
+    pkgs = (import clash-compiler.inputs.nixpkgs {
+      inherit system;
+    }).extend clash-compiler.overlays.${compiler-version};
+    clash-pkgs = pkgs."clashPackages-${compiler-version}";
+
+    # Define your Haskell package
+    overlay = final: prev: {
+      # Add the clash-ila to your project
+      clash-ila = clash-ila.packages.${system}.clash-ila;
+
+      # Your haskell package here
+      my-package = prev.developPackage {
+        root = ./my-source;
+        overrides = _: _: final;
+      };
+    };
+
+    # The final Haskell package set, containing your project as well as all Clash dependencies
+    hs-pkgs = clash-pkgs.extend overlay;
+  in
+  {
+    packages.default = hs-pkgs.my-package;
+  }
+```
+
+You can also run the ILA-CLI with Nix, by typing `nix run github:qbaylogic/clash-ila/library`.
+
+## Usage
+
+### ILA Clash component
+
+Once the ILA is added as a dependency in your Clash project, you will need to add two modules to
+your ILA design: `Ila` and `ConfigGen`. The `Ila` module exposes several different ILA circuits,
+from 'all-in-one' packages (`ilaUart` for an UART connected ILA for example) to the individual circuits
+to fine-tune control. The `ConfigGen` module provides the `ilaConfig` function, which is crucial to
+instantiate the ILA.
+
+#### Configuration
+
+The `ilaConfig` function takes in several signals and an `WithIlaConfig`-record type to configure the
+ILA and write this data to a file during synthesis. This file is referred to as the "ila configuration
+file" and contains crucial information for the CLI to know about, such as the bit widths of each signal.
+The `ilaConfig` function will return an `IlaConfig`-record, which is used by ILA circuit to know
+which signals to monitor.
+
+An example of how to build up an configuration using `ilaConfig`:
+
+```hs
+ilaConfig
+    -- Monitor the "txByte" signal, with the label "OutgoingByte"
+    (txByte, "OutgoingByte")
+    -- Monitor the "rxByte" signal, with the label "IncomingByte"
+    (rxByte, "IncomingByte")
+    WithIlaConfig
+      { bufferDepth = d100
+      -- ^ The amount of samples the ILA is capable of storing
+      , name = "TX_RX_Monitoring"
+      -- ^ The name of the system to display in the VCD
+      , triggerPoint = 0
+      -- ^ How many samples to store *after* the ILA has triggered
+      , triggers = ilaDefaultPredicates
+      -- ^ The predicates that the ILA are capable of triggering
+      , capture = pure True
+      -- ^ Enables the capturing of signals, when `capture` is false the ILA is inactive
+      }
+```
+
+As previously mentioned, the `ilaConfig` function will generate a json file during synthesis. This
+file contains crucial information about the ILA which is needed by the CLI to properly communicate
+with the ILA. This file has the name following the structure of `<topentity>_ilaconf_<hash>.json`.
+Where `<topentity>` should be substituted by the topentity function name and `<hash>` is a hash of
+the file generated by Clash. The file is often located under `_build/02-hdl` when synthesis of your
+Clash project has been completed. When invoking the ila-cli, you will need to provide the path to
+this file with the `-f` flag. More information about this under the **ILA-CLI** section.
+
+##### Predicates
+
+Noteworthy is the `ilaDefaultPredicates` variable. This variable is a predefined list of predicates
+each with a name. Similar to how signals are captured by the ILA, except with predicates rather than
+signals. These predicates can be toggled and combined in the CLI at runtime. The default list of
+predicates includes:
+
+ 1. Equality
+
+ 2. Less than
+
+ 3. Greater than
+
+ 4. Always true
+
+ 5. Always false
+
+Each predicate (if enabled) will receive the current sample, bitmask and compare value. It should
+return a boolean indicating if the current sample triggers the predicate. Predicates are used in two
+different locations in the ILA, that being for the trigger and capture status. This system allows
+the developer to configure the trigger and capture conditions of the ILA at runtime, without requiring
+resynthesis.
+
+If however the default set of predicates is insufficient, the developer can choose to append or
+outright replace the default set of predicates with their own. The type definition is defined in
+code and the developer can use the default set of predicates for example implementations. After 
+creating a predicate, it should be bundled with a string to identify the predicate in the software.
+
+#### Usage
+
+The ILA circuits themselves use Clash circuits, this makes it easy to use with circuit-notation.
+However not all project will use circuit notation. It is possible to 'extract' the function from 
+the circuit by pattern matching on the ILA circuit. For example `Circuit yourILA = ilaUart ...`. You
+can then use this as any other function in your design. The signature of this function will always be
+`(backpressure, data) -> (backpressure, data)`. Depending on the way the ILA is connected, 
+proper backpressure may not be supported, such as in the case of UART. In those scenarios you should
+ignore backpressure, but do keep in mind sending data too fast may overload the system!
+
+An example ILA setup, using UART and three basic signals to 'debug' is shown below:
+
+```hs
+ilaTopLevel ::
+  forall dom baud.
+  (HiddenClockResetEnable dom, ValidBaud dom baud) =>
+  -- | Baud rate of UART
+  SNat baud ->
+  -- | RX
+  Signal dom Bit ->
+  -- | TX
+  Signal dom Bit
+ilaTopLevel baud rx = go
+ where
+  -- | Some dummy signals to monitor
+  counter0 :: (HiddenClockResetEnable dom) => Signal dom (Unsigned 12)
+  counter0 = register 0 $ satAdd SatWrap 1 <$> counter0
+  counter1 :: (HiddenClockResetEnable dom) => Signal dom (Unsigned 8)
+  counter1 = register 20 $ satAdd SatWrap 1 <$> counter1
+  counter2 :: (HiddenClockResetEnable dom) => Signal dom (Signed 10)
+  counter2 = register 40 $ satAdd SatWrap 1 <$> counter2
+
+  -- | The ILA component
+  Circuit demoIla = ilaUart
+    baud
+    $ ilaConfig
+      (counter0, "c0")
+      (counter1, "c1")
+      (counter2, "c2")
+      WithIlaConfig
+        { bufferDepth=d10
+        , name="DemoILA"
+        , triggerPoint=0
+        , triggers=ilaDefaultPredicates
+        , capture=pure True
+        }
+
+  -- | Connect the TX and RX pins to the toplevel
+  -- We ignore backpressure, because UART doesn't have the concept of 'data packets' only individual 
+  -- bits
+  go = snd $ demoIla (rx, pure ())
+```
+
+### ILA-CLI
+
+The ILA is used and configured using the `ila-cli` tool. This tool has a lot of available options to
+use. Invoke `ila-cli --help` to see all of the available options available within the CLI. This guide
+will focus on the TUI (`ila-cli tui`) integrated within the CLI tool.
+
+To enter the TUI, simply invoke `ila-cli` with the `tui` parameter. Required arguments are `-f` for
+the automatically generated ILA configuration json file and `-p` for the port the FPGA is connected
+to.
+
+Example:
+
+`ila-cli tui -p /dev/ttyUSB0 -f _build/02-hdl/ilaconf.json`
+
+This would start the ila-cli in TUI mode, listen to port `/dev/ttyUSB0` and use the automatically
+generated `ilaconf.json` file located under `_build/02-hdl`.
+
+The TUI consists out of two main pages, the general page and a page dedicated to configuring predicates.
+
+#### Main page
+
+This page is split up into three sections: the keybinds, info tab and a command log. The keybinds
+display the available keybinds, the info tab displays information about the ILA and the command log
+will provide feedback for the triggered commands. The main page exposes the main functionality of the
+ILA. These are triggered using the keybinds. These keybinds are:
+
+- CTRL-C => Exit the TUI
+
+- space  => Retrieves the samples from the ILA, only works when the ILA is in a triggered state
+
+- r      => Re-arm the trigger, resets/re-arms the trigger and clears the buffer.
+
+- t      => Change the trigger point, sets the amount of samples for the ILA to capture *after*
+having been triggered.
+
+- v      => Write the samples captured by the ILA to a VCD file. 
+
+Along side the keybinds, the CLI will probe the ILA for when it has triggered and display this under
+the info tab.
+
+A typical workflow is as follows: 1) wait until the system is triggered. 2) retrieve samples (`s`)
+3) save to VCD file (`v`) 4) If new set of samples is desired, press (`r`) to re-arm the trigger
+and repeat.
+
+```
+┌ILA - Port /dev/???───────────────────────────────────────────┐
+│┌Keybinds────────────────────────────────────────────────────┐│
+││  CTRL-c ---   Exit                                         ││
+││  space  ---   Read samples (if triggered)                  ││
+││  t      ---   Change trigger point                         ││
+││  p      ---   Change trigger predicates                    ││
+││  r      ---   Reset trigger                                ││
+││  v      ---   Write signals to VCD dump                    ││
+│└────────────────────────────────────────────────────────────┘│
+│┌Info────────────────────────────────────────────────────────┐│
+││Received 0 captured                                         ││
+││The ILA is TRIGGERED                                        ││
+││                                                            ││
+││                                                            ││
+││                                                            ││
+││                                                            ││
+││                                                            ││
+││                                                            ││
+││                                                            ││
+││                                                            ││
+││────────────────────────────────────────────────────────────││
+││                                                            ││
+││                                                            ││
+││                                                            ││
+││                                                            ││
+││                                                            ││
+││                                                            ││
+││                                                            ││
+││                                                            ││
+││                                                            ││
+│└────────────────────────────────────────────────────────────┘│
+└──────────────────────────────────────────────────────────────┘
+```
+ ^ An image of the main page
+
+#### Predicate configuration
+
+The ILA has the ability to change the predicates it uses to control the capture and trigger signals.
+This is done in the Predicate configuration page. To get to this page, simply press `p` on the main
+page (to configure the trigger predicates) or `c` (to configure capture predicates). Both pages are
+identical aside from the predicates it is configuring.
+
+Nagivating the different pages can be done with CTRL-LEFT and CTRL-RIGHT. Exiting can be done using
+ESC and the entire TUI program can be terminated with CTRL-C. Different page elements can be navigated
+by using UP and DOWN keys. Pressing ENTER will attempt to write the data to the ILA, and ESC will
+discard them. These keybinds are always displayed within the UI itself.
+
+When entering the predicates page, you are presented with three different pages. The general page,
+on here you can change which predicates are active, and how it should combine the results of these
+predicates. In other words, if it should only activate when all predicates are active (AND) or if
+one of the predicates is (OR).
+
+The next page is about masks, in here you can define a mask to filter certain bits on the predicate.
+The compare page follows a similar layout, where you can define a value for the predicates to compare
+incoming data too.
+
+By default, no masking is done. Most likely you want to isolate a singular signal. To achieve that
+simply set the masking bits of the signals you don't want to test to zero. Then, on the compare page
+set the compare value of the signal to the value you want the predicate to test against.
+
+```
+ General │ Mask │ Compare
+┌──────────────────────────────────────────────────────────────┐
+│General predicate settings                                    │
+│                                                              │
+│Predicate operation                                           │
+│> ( ) - AND                                                   │
+│(*) - OR                                                      │
+│                                                              │
+│Predicate Selector                                            │
+│[*] - Equals                                                  │
+│[ ] - Greater than                                            │
+│[ ] - Less than                                               │
+│[ ] - Always true                                             │
+│[*] - Always false                                            │
+│                                                              │
+│                                                              │
+│                                                              │
+│                                                              │
+│                                                              │
+│                                                              │
+│                                                              │
+│                                                              │
+│                                                              │
+│                                                              │
+│                                                              │
+│                                                              │
+└──────────────────────────────────────────────────────────────┘
+┌keybinds──────────────────────────────────────────────────────┐
+│CTRL-LEFT and CTRL-RIGHT to navigate tabs                     │
+│UP and DOWN to navigate between elements                      │
+│ENTER to save changes, ESC to discard                         │
+└──────────────────────────────────────────────────────────────┘
+```
+ ^ An image of the general predicates page
+
+## Compilation & development
+
+The easiest way to get all the tools necessary to compile the project is to download and install the
+Nix package manager. This can be done by going to the Nix website (https://nixos.org/download/) and
+selecting your operating system. Once installed, go and clone the clash-ila repository. Enter the
+clash-ila git directory and type the command:
+
+`nix develop --extra-experimental-features nix-command --extra-experimental-features flakes`
+
+This will fetch all the tools necessary to manually compile the project.
+
+The file structure of the project looks (with files filtered out for clarity) like the following:
+
+```
+root
+├── cabal.project
+├── clash
+│   └── Main.hs
+├── flake.nix
+├── ila-cli
+│   ├── src
+│   └── target
+└── ila
+    ├── src
+    ├── tests
+    └── top
+```
+
+The main important subdirectories are the `ila` and `ila-cli` subdirectories.
+
+The `ila` subdirectory contains all the source code for the FPGA side of the project. To compile the
+Clash code, simply enter the `ila` subdirectory and run `make hdl`. This will compile the demo project.
+To upload the code to an orangecrab FPGA, invoke `make upload`. The project also contains in-code
+documentation, to generate this code you can invoke `make haddock clash-ila`. This command will output
+an directory, opening that directory in a browser and going to `index.html` will display the in-code
+documentation.
+
+The `ila-cli` directory contains the Rust code for the CLI. To compile the Rust code, simply enter
+the directory and run `cargo build` or `cargo build --release` if you want to compile a release version
+of the project. The CLI binary will be located under `target/debug/ila-cli` or `target/release/ila-cli`,
+depending on if the project was compiled with the release flag or not.
+
+If you wish to develop the project further and require an extra tool, you can modify the `flake.nix`
+file and simply re-enter the Nix development shell. For more information about Nix and Nix flakes,
+I recommend reading the following article: https://nixos-and-flakes.thiscute.world/development/intro.
+
+The other subdirectory in the project is the `clash` directory, this is a simple wrapper around the 
+Clash CLI for the makefiles to properly work.
+
