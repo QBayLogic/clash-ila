@@ -18,10 +18,8 @@ use ratatui::{
     *,
 };
 
-use crate::communication::{
-    perform_register_operation, RegisterOutput, SignalCluster,
-};
 use crate::cli_registers::IlaRegisters;
+use crate::communication::{perform_register_operation, RegisterOutput, SignalCluster};
 use crate::config::IlaConfig;
 use crate::predicates::IlaPredicate;
 use crate::predicates::PredicateTarget;
@@ -35,6 +33,7 @@ const KEYBIND_TEXT: &str = r#"  CTRL-c ---   Exit
   t      ---   Change trigger point
   p      ---   Change trigger predicates
   c      ---   Change capture predicates
+  R      ---   Toggle automatic reading of samples
   r      ---   Re-arm trigger
   a      ---   Toggle auto trigger re-arm
   v      ---   Write signals to VCD dump
@@ -91,6 +90,10 @@ pub struct TuiSession<'a> {
     captured: Vec<SignalCluster>,
     /// Checks if the predicate is triggered or not
     triggered: bool,
+    /// Will automatically sample when the system detected a trigger
+    /// NOTE: due to the trigger only being sampled X every seconds, this cannot be used to
+    /// determine the time of trigger
+    auto_sample: bool,
     /// The amount of samples currently stored in the buffer
     sample_count: u32,
     /// The time since the last triggered check has been performed
@@ -120,6 +123,7 @@ impl<'a> TuiSession<'a> {
             log: Vec::with_capacity(64),
             captured: vec![],
             triggered: false,
+            auto_sample: true,
             sample_count: 0,
             last_trigger_check: Instant::now(),
             auto_reset: false,
@@ -148,7 +152,7 @@ impl<'a> TuiSession<'a> {
             let info_layout = Layout::default()
                 .direction(layout::Direction::Vertical)
                 .margin(1)
-                .constraints([Constraint::Length(4), Constraint::Fill(1)])
+                .constraints([Constraint::Length(5), Constraint::Fill(1)])
                 .split(main_layout[1]);
 
             // Ensure the lines fit within the Paragraph's range
@@ -186,6 +190,13 @@ impl<'a> TuiSession<'a> {
                 Line::from_iter([
                     "Auto-rearm is ".into(),
                     match self.auto_reset {
+                        true => "ENABLED".bold().green(),
+                        false => "DISABLED".bold().red(),
+                    },
+                ]),
+                Line::from_iter([
+                    "Auto-sample is ".into(),
+                    match self.auto_sample {
                         true => "ENABLED".bold().green(),
                         false => "DISABLED".bold().red(),
                     },
@@ -267,6 +278,10 @@ impl<'a> TuiSession<'a> {
             }
             (TuiState::Main, KeyCode::Char('a'), _) => {
                 self.auto_reset = !self.auto_reset;
+                KeyResponse::Nothing
+            }
+            (TuiState::Main, KeyCode::Char('R'), _) => {
+                self.auto_sample = !self.auto_sample;
                 KeyResponse::Nothing
             }
             (TuiState::Main, KeyCode::Char(' '), _) => {
@@ -446,6 +461,7 @@ impl<'a> TuiSession<'a> {
     pub fn main_loop<T: Read + Write>(&mut self, mut tx_port: T) {
         self.render();
 
+        let mut last_should_sample = false;
         loop {
             if let Ok(true) = poll(Duration::from_millis(100)) {
                 let raw_event = read();
@@ -528,6 +544,25 @@ impl<'a> TuiSession<'a> {
                         self.sample_count
                     }
                 };
+                let should_sample = self.auto_sample && self.triggered && self.sample_count > 0;
+                eprintln!("PRE {should_sample} <-> {last_should_sample}");
+                if should_sample && !last_should_sample {
+                    eprintln!("GET {should_sample} <-> {last_should_sample}");
+                    let indices: Vec<u32> = (0_u32..self.sample_count).collect();
+                    match perform_register_operation(
+                        &mut tx_port,
+                        self.config,
+                        &IlaRegisters::Buffer(indices),
+                    ) {
+                        Ok(RegisterOutput::BufferContent(cluster)) => self.captured.push(cluster),
+                        Ok(_) => self
+                            .log
+                            .push("Unexpected output when reading buffer".into()),
+                        Err(err) => self.log.push(format!("Error: {err}")),
+                    }
+                }
+                last_should_sample = should_sample;
+                eprintln!("UPT {should_sample} <-> {last_should_sample}");
 
                 self.render();
             }
