@@ -61,7 +61,7 @@ pub struct RegisterArgs {
     #[arg(short, long, help = "Path to serial port to use")]
     port: PathBuf,
 
-    #[arg(short, long, default_value_t = 9600, help = "Sets baud rate")]
+    #[arg(short, long, default_value_t = 115200, help = "Sets baud rate")]
     baud: u32,
 
     #[command(flatten)]
@@ -109,7 +109,7 @@ pub struct ExportArgs {
     #[arg(short, long, help = "Path to serial port to use")]
     port: PathBuf,
 
-    #[arg(short, long, default_value_t = 9600, help = "Sets baud rate")]
+    #[arg(short, long, default_value_t = 115200, help = "Sets baud rate")]
     baud: u32,
 
     #[arg(short = 's', long, default_value_t = 0, help = "Start index to grab data from (inclusive)")]
@@ -180,7 +180,7 @@ pub struct MonitorArgs {
     #[arg(short, long, help = "Path to serial port to use")]
     port: PathBuf,
 
-    #[arg(short, long, default_value_t = 9600, help = "Sets baud rate")]
+    #[arg(short, long, default_value_t = 115200, help = "Sets baud rate")]
     baud: u32,
 
     #[arg(
@@ -215,7 +215,7 @@ pub struct TuiArgs {
     #[command(flatten)]
     config: ConfigMethod,
 
-    #[arg(short, long, default_value_t = 9600, help = "Sets baud rate")]
+    #[arg(short, long, default_value_t = 115200, help = "Sets baud rate")]
     baud: u32,
 }
 

@@ -62,6 +62,6 @@ topEntity ::
   "BTN" ::: Reset Dom48 ->
   "PMOD1_6" ::: Signal Dom48 Bit ->
   "PMOD1_5" ::: Signal Dom48 Bit
-topEntity clk rst = withClockResetEnable clk rst enableGen (topLogicUart (SNat @9600))
+topEntity clk rst = withClockResetEnable clk rst enableGen (topLogicUart (SNat @115200))
 
 makeTopEntity 'topEntity
