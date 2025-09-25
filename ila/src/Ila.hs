@@ -438,7 +438,7 @@ ilaWb (IlaConfig @_ @a @depth @m depth initTriggerPoint ilaHash tracing predicat
     (ilaRM, ilaAction) =
       unbundle $
         moore
-          (transfer)
+          transfer
           id
           (initRM, None)
           (bundle (fwdM2S, tracing, bufferLength, bundle predicates))
