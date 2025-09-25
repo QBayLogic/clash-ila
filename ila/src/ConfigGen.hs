@@ -58,47 +58,64 @@ import Data.Word (Word32)
 Used to compare incoming data to a reference value (with a possible mask) and returns if the
 predicate holds or not. This is used for the ILA trigger and the ILA capture
 -}
-type Predicate a =
+type Predicate dom a =
   -- | Incoming sample
-  a ->
+  Signal dom a ->
   -- | Data to compare too
-  BitVector (BitSize a) ->
+  Signal dom (BitVector (BitSize a)) ->
   -- | Sample mask
-  BitVector (BitSize a) ->
+  Signal dom (BitVector (BitSize a)) ->
   -- | Bool indicating if the predicate holds true
-  Bool
+  Signal dom (Bool)
+
+simplePredicate :: forall dom a.
+  (a -> BitVector (BitSize a) -> BitVector (BitSize a) -> Bool) ->
+  Predicate dom a
+simplePredicate f s c m = f'
+  where
+    f' = f <$> s <*> c <*> m
 
 -- | Same as `Predicate a` but with a string to display in the CLI
-type NamedPredicate a = (Predicate a, String)
+type NamedPredicate dom a = (Predicate dom a, String)
 
 {- | Default ILA predicate for checking equality
 It applies the mask over the incoming sample and `==` it with the compare value
 -}
-ilaPredicateEq :: (BitPack a) => Predicate a
-ilaPredicateEq s c m = ((pack s) .&. m) == c
+ilaPredicateEq :: forall dom a. (BitPack a) => Predicate dom a
+ilaPredicateEq = simplePredicate ilaPredicateEq'
+  where
+    ilaPredicateEq' s c m = ((pack s) .&. m) == c
 
 {- | Default ILA predicate for checking less-than
 It applies the mask over the incoming sample and `<` it with the compare value
 -}
-ilaPredicateLt :: (BitPack a) => Predicate a
-ilaPredicateLt s c m = ((pack s) .&. m) < c
+ilaPredicateLt :: forall dom a. (BitPack a) => Predicate dom a
+ilaPredicateLt = simplePredicate ilaPredicateLt'
+  where
+    ilaPredicateLt' s c m = ((pack s) .&. m) < c
 
 {- | Default ILA predicate for checking greater-than
 It applies the mask over the incoming sample and `>` it with the compare value
 -}
-ilaPredicateGt :: (BitPack a) => Predicate a
-ilaPredicateGt s c m = ((pack s) .&. m) > c
+ilaPredicateGt :: forall dom a. (BitPack a) => Predicate dom a
+ilaPredicateGt = simplePredicate ilaPredicateGt'
+  where
+    ilaPredicateGt' s c m = ((pack s) .&. m) > c
 
 -- | Default ILA predicate, ignores all arguments and always returns `True`
-ilaPredicateTrue :: (BitPack a) => Predicate a
-ilaPredicateTrue _ _ _ = True
+ilaPredicateTrue :: forall dom a. (BitPack a) => Predicate dom a
+ilaPredicateTrue = simplePredicate ilaPredicateTrue'
+  where
+    ilaPredicateTrue' _ _ _ = True
 
 -- | Default ILA predicate, ignores all arguments and always returns `False`
-ilaPredicateFalse :: (BitPack a) => Predicate a
-ilaPredicateFalse _ _ _ = False
+ilaPredicateFalse :: forall dom a. (BitPack a) => Predicate dom a
+ilaPredicateFalse = simplePredicate ilaPredicateFalse'
+  where
+    ilaPredicateFalse' _ _ _ = False
 
 -- | Predefined list of three ILA predicates. The operators it covers are: `==`, `>`, `<`
-ilaDefaultPredicates :: (BitPack a) => Vec 5 (NamedPredicate a)
+ilaDefaultPredicates :: forall dom a. (BitPack a) => Vec 5 (NamedPredicate dom a)
 ilaDefaultPredicates =
   ( (ilaPredicateEq, "Equals")
       :> (ilaPredicateGt, "Greater than")
@@ -132,7 +149,7 @@ data IlaConfig dom where
     -- ^ The hash of the ILA, is used to check if the computer is talking to the right ILA
     , tracing :: Signal dom a
     -- ^ The signal being sampled from
-    , predicates :: Vec m (Predicate a)
+    , predicates :: Vec m (Predicate dom a)
     -- ^ A list of predicates, used to control trigger/capture logic
     } ->
     IlaConfig dom
@@ -140,9 +157,9 @@ data IlaConfig dom where
 {- | The user provided ILA configuration record. This is used to terminate the creation of an
 `IlaConfig` when using `ilaConfig`.
 -}
-data WithIlaConfig a where
+data WithIlaConfig dom a where
   WithIlaConfig ::
-    forall n m a.
+    forall dom n m a.
     ( KnownNat n
     , KnownNat m
     , BitPack a
@@ -158,10 +175,10 @@ data WithIlaConfig a where
     -- ^ How many samples *after* triggering it will continue to sample
     , bufferDepth :: SNat n
     -- ^ The amount of samples that can be stored in the buffer
-    , predicates :: Vec m (NamedPredicate a)
+    , predicates :: Vec m (NamedPredicate dom a)
     -- ^ A list of predicates, used to control trigger/capture logic
     } ->
-    WithIlaConfig a
+    WithIlaConfig dom a
 
 {- | From a tuple consisting of a signal and a string, grab the bit width of the signal and put it
 in a vector. At the same time, bundle every signal together.
@@ -181,11 +198,11 @@ instance
   , a ~ b
   ) =>
   LabeledSignals
-    ((Vec n GenSignal, Signal dom a) -> WithIlaConfig b -> IlaConfig dom)
+    ((Vec n GenSignal, Signal dom a) -> WithIlaConfig dom b -> IlaConfig dom)
   where
   ilaProbe ::
     (Vec n GenSignal, Signal dom a) ->
-    WithIlaConfig a ->
+    WithIlaConfig dom a ->
     IlaConfig dom
   ilaProbe (signalInfos, tracing) (WithIlaConfig @_ @_ @_ toplevel triggerPoint bufferDepth predicates) =
     IlaConfig
