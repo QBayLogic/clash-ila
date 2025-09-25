@@ -61,22 +61,24 @@ predicate holds or not. This is used for the ILA trigger and the ILA capture
 -}
 type Predicate dom a = Signal dom (RawPredicate a)
 
+-- | Internal predicate type that gets passed to the ILA
 type RawPredicate a = 
   -- | Incoming sample
   a ->
   -- | Data to compare too
-  (BitVector (BitSize a)) ->
+  BitVector (BitSize a) ->
   -- | Sample mask
-  (BitVector (BitSize a)) ->
+  BitVector (BitSize a) ->
   -- | Bool indicating if the predicate holds true
-  (Bool)
+  Bool
 
+-- | Turns a combinational function into a predicate
 simplePredicate :: forall dom a.
   (a -> BitVector (BitSize a) -> BitVector (BitSize a) -> Bool) ->
   Predicate dom a
 simplePredicate f = pure f
 
--- | Same as `Predicate a` but with a string to display in the CLI
+-- | Same as `Predicate dom a` but with a string to display in the CLI
 type NamedPredicate dom a = (Predicate dom a, String)
 
 {- | Default ILA predicate for checking equality
