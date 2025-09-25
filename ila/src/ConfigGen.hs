@@ -21,6 +21,7 @@ module ConfigGen (
   -- | Types for custom predicates
   Predicate,
   NamedPredicate,
+  RawPredicate,
 
 
   -- | Clash refuses to compile if these blackbox functions are not in scope
@@ -58,22 +59,22 @@ import Data.Word (Word32)
 Used to compare incoming data to a reference value (with a possible mask) and returns if the
 predicate holds or not. This is used for the ILA trigger and the ILA capture
 -}
-type Predicate dom a =
+type Predicate dom a = Signal dom (RawPredicate a)
+
+type RawPredicate a = 
   -- | Incoming sample
-  Signal dom a ->
+  a ->
   -- | Data to compare too
-  Signal dom (BitVector (BitSize a)) ->
+  (BitVector (BitSize a)) ->
   -- | Sample mask
-  Signal dom (BitVector (BitSize a)) ->
+  (BitVector (BitSize a)) ->
   -- | Bool indicating if the predicate holds true
-  Signal dom (Bool)
+  (Bool)
 
 simplePredicate :: forall dom a.
   (a -> BitVector (BitSize a) -> BitVector (BitSize a) -> Bool) ->
   Predicate dom a
-simplePredicate f s c m = f'
-  where
-    f' = f <$> s <*> c <*> m
+simplePredicate f = pure f
 
 -- | Same as `Predicate a` but with a string to display in the CLI
 type NamedPredicate dom a = (Predicate dom a, String)

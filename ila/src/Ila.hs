@@ -397,30 +397,30 @@ ilaWb (IlaConfig @_ @a @depth @m depth initTriggerPoint ilaHash tracing predicat
         }
 
     -- \| Selects the right predicate and applies it on incoming sample
-    doesTrigger :: IlaRM (BitSize a) depth m -> a -> Bool
-    doesTrigger rm currentSample =
+    doesTrigger :: IlaRM (BitSize a) depth m -> a -> Vec m (RawPredicate a) -> Bool
+    doesTrigger rm currentSample predicates' =
       rm.capture -- If capture is disabled, don't bother with testing predicates
         && ( predicateOperation rm.triggerOperation $
               zipWith
                 (predicateUnselectedDefault rm.triggerOperation)
                 (reverse . unpack $ resize rm.triggerSelect)
-                ((\predicate -> predicate currentSample rm.triggerCompare rm.triggerMask) <$> predicates)
+                ((\predicate -> predicate currentSample rm.triggerCompare rm.triggerMask) <$> predicates')
            )
 
     -- \| Selects the right predicate and applies it on incoming sample
-    captureActive :: IlaRM (BitSize a) depth m -> a -> Bool
-    captureActive rm currentSample =
+    captureActive :: IlaRM (BitSize a) depth m -> a -> Vec m (RawPredicate a) -> Bool
+    captureActive rm currentSample predicates' =
       predicateOperation rm.captureOperation $
         zipWith
           (predicateUnselectedDefault rm.captureOperation)
           (reverse . unpack $ resize rm.captureSelect)
-          ((\predicate -> predicate currentSample rm.captureCompare rm.captureMask) <$> predicates)
+          ((\predicate -> predicate currentSample rm.captureCompare rm.captureMask) <$> predicates')
 
     -- \| The transfer function of the moore state machine
     --
     -- This function will update the register map of the ILA, always first attempting to update
     -- the ILA with wishbone write requests, then updating non-wishbone dependent aspects of the ILA
-    transfer (oldRM, _) (wb, currentSample, buffLength) = wbUpdate regularUpdate
+    transfer (oldRM, _) (wb, currentSample, buffLength, predicates') = wbUpdate regularUpdate
      where
       wbUpdate
         | wb.strobe && wb.busCycle && wb.writeEnable = writeIlaMM wb.addr wb.busSelect wb.writeData
@@ -429,8 +429,8 @@ ilaWb (IlaConfig @_ @a @depth @m depth initTriggerPoint ilaHash tracing predicat
 
       regularUpdate =
         updateRM
-          (doesTrigger oldRM currentSample)
-          (captureActive oldRM currentSample)
+          (doesTrigger oldRM currentSample predicates')
+          (captureActive oldRM currentSample predicates')
           buffLength
           oldRM
 
@@ -438,10 +438,10 @@ ilaWb (IlaConfig @_ @a @depth @m depth initTriggerPoint ilaHash tracing predicat
     (ilaRM, ilaAction) =
       unbundle $
         moore
-          transfer
+          (transfer)
           id
           (initRM, None)
-          (bundle (fwdM2S, tracing, bufferLength))
+          (bundle (fwdM2S, tracing, bufferLength, bundle predicates))
 
     -- \| If the trigger gets triggered in the current sample, the rest of the system will only know
     -- that the next cycle. This means that there will be an off-by-one error for capturing the
