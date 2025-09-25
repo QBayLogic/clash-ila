@@ -2,6 +2,7 @@
 {-# LANGUAGE OverloadedRecordDot #-}
 {-# LANGUAGE TemplateHaskell #-}
 {-# LANGUAGE NoFieldSelectors #-}
+{-# LANGUAGE TypeApplications #-}
 {-# OPTIONS_GHC -fconstraint-solver-iterations=10 #-}
 {-# OPTIONS_GHC -fplugin=Protocols.Plugin #-}
 
@@ -51,7 +52,7 @@ topLogicUart baud rx = tx
         -- ^ The name displayed in the waveform viewer
         , triggerPoint = 0
         -- ^ Amount of samples in the buffer after trigger
-        , predicates = ilaDefaultPredicates
+        , predicates = (ilaDefaultPredicates @dom)
         -- ^ The list of predicates to select from during runtime
         }
   tx = snd $ demoIla (rx, (pure ()))
