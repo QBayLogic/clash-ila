@@ -8,7 +8,8 @@ import Data.Maybe qualified as DM
 import Hedgehog
 import Hedgehog.Gen qualified as Gen
 import Hedgehog.Range qualified as Range
-import RingBuffer
+
+import Clash.Ila.Internal.RingBuffer
 
 -- | Define the start/middle/end of a sequence, making sequences testing easier
 data SequenceState a = SSNothing | SSValue a | SSInputEnd deriving (Generic, NFDataX)

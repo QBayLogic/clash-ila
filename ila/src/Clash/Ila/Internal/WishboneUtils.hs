@@ -2,9 +2,10 @@
 {-# LANGUAGE OverloadedRecordDot #-}
 {-# LANGUAGE NoFieldSelectors #-}
 
-module WishboneUtils where
+module Clash.Ila.Internal.WishboneUtils where
 
 import Clash.Prelude
+
 import Protocols.Wishbone
 
 {- | Check if the current wishbone cycle has a specific address and byte select

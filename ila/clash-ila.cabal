@@ -73,30 +73,36 @@ library
   import: common-options
   hs-source-dirs: src
   exposed-modules:
-    SignalFieldSelectors
-    Domain
-    RingBuffer
-    Ila
-    Communication
-    ConfigGen
-    WishboneUtils
+    Clash.Ila
+    Clash.Ila.Configurator
+  other-modules:
+    Clash.Ila.Internal.Communication
+    Clash.Ila.Internal.RingBuffer
+    Clash.Ila.Internal.SignalFieldSelectors
+    Clash.Ila.Internal.WishboneUtils
 
 test-suite unittests
   import: common-options
   type: exitcode-stdio-1.0
-  hs-source-dirs: tests
+  hs-source-dirs:
+    tests
+    src
   main-is: Tests.hs
   build-depends:
     clash-ila
   other-modules:
     Tests.RingBuffer
     Tests.Communication
+    Clash.Ila.Internal.Communication
+    Clash.Ila.Internal.RingBuffer
 
 library examples
   import: common-options
-  hs-source-dirs: examples
+  hs-source-dirs:
+    examples
   build-depends:
     clash-ila
   exposed-modules:
     ClashIlaDemo
+    Domain
 
