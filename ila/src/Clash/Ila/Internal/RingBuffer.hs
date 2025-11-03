@@ -2,9 +2,10 @@
 {-# LANGUAGE DuplicateRecordFields #-}
 {-# LANGUAGE NoFieldSelectors #-}
 
-module RingBuffer where
+module Clash.Ila.Internal.RingBuffer where
 
 import Clash.Prelude
+
 import Protocols
 import Protocols.PacketStream
 

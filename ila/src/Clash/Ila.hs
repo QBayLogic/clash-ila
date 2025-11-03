@@ -7,24 +7,26 @@
 {-# OPTIONS_GHC -fconstraint-solver-iterations=10 #-}
 {-# OPTIONS_GHC -fplugin=Protocols.Plugin #-}
 
-module Ila (
+module Clash.Ila (
   ilaWb,
   ila,
   ilaUart,
 ) where
 
 import Clash.Prelude
-import ConfigGen
-import RingBuffer
-import WishboneUtils
+
+import Clash.Ila.Configurator
+import Clash.Ila.Internal.RingBuffer
+import Clash.Ila.Internal.WishboneUtils
+import Clash.Ila.Internal.Communication
+import Clash.Ila.Internal.SignalFieldSelectors
 
 import Clash.Cores.Etherbone (etherboneC)
 import Clash.Cores.UART (ValidBaud)
-import Communication
+
 import Protocols
 import Protocols.PacketStream
 import Protocols.Wishbone
-import SignalFieldSelectors
 
 {- | The buffer of the ila, with signals to control wether or not the signals get captured
 

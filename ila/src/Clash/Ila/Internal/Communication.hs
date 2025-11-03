@@ -2,15 +2,16 @@
 {-# LANGUAGE OverloadedRecordDot #-}
 {-# LANGUAGE NoFieldSelectors #-}
 
-module Communication where
+module Clash.Ila.Internal.Communication where
 
 import Clash.Cores.UART (ValidBaud, uart)
 import Clash.Prelude
-import Data.Maybe qualified as DM
+
 import Protocols
 import Protocols.Df qualified as Df
 import Protocols.PacketStream
 
+import Data.Maybe qualified as DM
 import Data.String.Interpolate (__i)
 import Debug.Trace
 

@@ -5,7 +5,7 @@
 {-# LANGUAGE UndecidableInstances #-}
 {-# LANGUAGE NoFieldSelectors #-}
 
-module ConfigGen (
+module Clash.Ila.Configurator (
   -- | ILA configuration
   ilaConfig,
   IlaConfig(..),
@@ -22,7 +22,6 @@ module ConfigGen (
   Predicate,
   NamedPredicate,
   RawPredicate,
-
 
   -- | Clash refuses to compile if these blackbox functions are not in scope
   writeSignalInfo,

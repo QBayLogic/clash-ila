@@ -11,9 +11,10 @@ import Clash.Annotations.TH
 import Clash.Cores.UART (ValidBaud)
 import Clash.Prelude
 
-import ConfigGen
+import Clash.Ila.Configurator
+import Clash.Ila
+
 import Domain
-import Ila
 import Protocols
 
 -- | Simple UART ILA demonstration

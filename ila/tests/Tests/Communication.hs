@@ -20,7 +20,7 @@ import Hedgehog
 import Hedgehog.Gen qualified as Gen
 import Hedgehog.Range qualified as Range
 
-import Communication
+import Clash.Ila.Internal.Communication
 
 depacketizeProperty :: Property
 depacketizeProperty = property $ do
