@@ -61,7 +61,7 @@ predicate holds or not. This is used for the ILA trigger and the ILA capture
 type Predicate dom a = Signal dom (RawPredicate a)
 
 -- | Internal predicate type that gets passed to the ILA
-type RawPredicate a = 
+type RawPredicate a =
   -- | Incoming sample
   a ->
   -- | Data to compare too
@@ -86,7 +86,7 @@ It applies the mask over the incoming sample and `==` it with the compare value
 ilaPredicateEq :: forall dom a. (BitPack a) => Predicate dom a
 ilaPredicateEq = simplePredicate ilaPredicateEq'
   where
-    ilaPredicateEq' s c m = ((pack s) .&. m) == c
+    ilaPredicateEq' s c m = m /= 0 && ((pack s) .&. m) == c
 
 {- | Default ILA predicate for checking less-than
 It applies the mask over the incoming sample and `<` it with the compare value
@@ -94,7 +94,7 @@ It applies the mask over the incoming sample and `<` it with the compare value
 ilaPredicateLt :: forall dom a. (BitPack a) => Predicate dom a
 ilaPredicateLt = simplePredicate ilaPredicateLt'
   where
-    ilaPredicateLt' s c m = ((pack s) .&. m) < c
+    ilaPredicateLt' s c m = m /= 0 && ((pack s) .&. m) < c
 
 {- | Default ILA predicate for checking greater-than
 It applies the mask over the incoming sample and `>` it with the compare value
@@ -102,7 +102,7 @@ It applies the mask over the incoming sample and `>` it with the compare value
 ilaPredicateGt :: forall dom a. (BitPack a) => Predicate dom a
 ilaPredicateGt = simplePredicate ilaPredicateGt'
   where
-    ilaPredicateGt' s c m = ((pack s) .&. m) > c
+    ilaPredicateGt' s c m = m /= 0 && ((pack s) .&. m) > c
 
 -- | Default ILA predicate, ignores all arguments and always returns `True`
 ilaPredicateTrue :: forall dom a. (BitPack a) => Predicate dom a
