@@ -17,7 +17,6 @@ import Clash.Prelude
 
 import Clash.Ila.Configurator
 import Clash.Ila.Internal.RingBuffer
-import Clash.Ila.Internal.WishboneUtils
 import Clash.Ila.Internal.Communication
 import Clash.Ila.Internal.SignalFieldSelectors
 
@@ -40,7 +39,6 @@ ilaCore ::
   , NFDataX a
   , BitPack a
   , KnownNat size
-  , 1 <= BitSize a `DivRU` 32
   , 1 <= size
   ) =>
   SNat size ->
@@ -131,29 +129,22 @@ ilaBufferManager ::
   (Signal dom (Index depth) -> (Signal dom a, Signal dom (Index (depth + 1)))) ->
   -- | The incoming Wishbone M2S signal
   Signal dom (WishboneM2S addrW 4 (BitVector 32)) ->
-  Signal dom (Index depth) ->
+  -- | What word from the buffer entry to read
   Signal dom (Index n) ->
   -- | The specific word associated with the requested address, if the current cycle is a read cycle
   -- it will return `0` instead.
   (Signal dom (BitVector 32), Signal dom (Index (depth + 1)))
-ilaBufferManager buffer incoming bufferIndex wordIndex = returnData
+ilaBufferManager buffer incoming wordIndex = returnData
  where
-  -- \| Returns the index and word index of the current address provided
-  -- getBufferIndex ::
-  --   WishboneM2S addrW 4 (BitVector 32) -> (Index depth, Index (BitSize a `DivRU` 32))
-  -- getBufferIndex m2s =
-  --   let
-  --     (bIndex, wIndex) = (m2s.addr - 0x3000_0000) `divMod` (natToNum @(BitSize a `DivRU` 32))
-  --    in
-  --     (unpack $ resize bIndex, unpack $ resize wIndex)
-  -- (bufferIndex, wordIndex) = unbundle $ getBufferIndex <$> incoming
-
   (bufferData, bufferLength) = buffer bufferIndex
+
+  isValidAddress wb = wb.addr .&. 0xff00_0000 == 0x3200_0000
+  bufferIndex = (\wb -> unpack $ resize (wb.addr .&. 0x00ff_ffff)) <$> incoming
 
   -- \| If in a read cycle, it will contain the output of the buffer, otherwise it will return 0
   returnData =
     ( mux
-        (not . writeEnable <$> incoming .&&. compareAddr 0x3200_0000 0b1111 incoming)
+        (not . writeEnable <$> incoming .&&. isValidAddress <$> incoming)
         (liftA2 (getWord @32) bufferData wordIndex)
         (pure 0)
     , bufferLength
@@ -197,7 +188,6 @@ A lot of the register map is also exposed as a memory map, with the following la
 | 0x1100_0000 | 0b1111     | ILA trigger compare   | ReadWrite   |
 | 0x2000_0000 | 0b1111     | ILA capture mask      | ReadWrite   |
 | 0x2100_0000 | 0b1111     | ILA capture compare   | ReadWrite   |
-| 0x3000_0000 | 0b1111     | Buffer index          | Write'3     |
 | 0x3100_0000 | 0b1111     | Word index            | Write'3     |
 | 0x3200_0000 | 0b1111     | Perform read          | Read'4      |
 
@@ -206,8 +196,8 @@ A lot of the register map is also exposed as a memory map, with the following la
 '3: Due to the etherbone requiring packets be split in packets of 32 bits, reading the memory
     requires the end user to provide two indices. The specific buffer index the user would like to
     read and which word of that buffer entry.
-'4: Actually performs the memory read from the values configured in the `Buffer index` and `Word
-    index`. Required to be a read and bus select must be all high.
+'4: Actually performs the memory reads from the internal ILA buffer, the buffer index is the
+    address being accessed as long as it is within 0x3200_0000 0x32ff_ffff.
 
 Future optimisation: introduce `Buffer length` register to perform multiple reads automatically
 without requiring manual reads. This will require a somewhat large overhaul of the TUI.
@@ -243,8 +233,6 @@ data IlaRM bitSizeA depth n = IlaRM
   -- ^ The mask given to the capture predicate
   , captureCompare :: BitVector bitSizeA
   -- ^ The compare value given to the capture predicate
-  , bufferIndex :: Index depth
-  -- ^ At what index to read the buffer from
   , wordIndex :: Index (bitSizeA `DivRU` 32)
   -- ^ What buffer to read
   }
@@ -351,8 +339,6 @@ writeIlaMM address 0b1111 write rm
   | testBits address 0x2100_0000 0xff00_0000 =
       (rm{captureCompare = setWord rm.captureCompare index write}, None)
 
-  | testBits address 0x3000_0000 0xff00_0000 =
-      (rm{bufferIndex = unpack $ resize write}, None)
   | testBits address 0x3100_0000 0xff00_0000 =
       (rm{wordIndex = unpack $ resize write}, None)
  where
@@ -398,7 +384,6 @@ ilaWb (IlaConfig @_ @a @depth @m depth initTriggerPoint ilaHash tracing predicat
         , captureSelect = minBound
         , captureMask = maxBound
         , captureCompare = 0
-        , bufferIndex = 0
         , wordIndex = 0
         }
 
@@ -488,7 +473,6 @@ ilaWb (IlaConfig @_ @a @depth @m depth initTriggerPoint ilaHash tracing predicat
             ((== ResetTrigger) <$> ilaAction)
         )
         fwdM2S
-        ilaRM.bufferIndex
         ilaRM.wordIndex
 
     -- \| Distribute the read request to different parts of the ILA depending on the address & bus select

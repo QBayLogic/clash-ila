@@ -393,10 +393,8 @@ pub enum RegisterSubcommand {
     CaptureSelect(ReadWriteArgument<Flag, Word>),
     /// The amount of samples current stored in the buffer
     SampleCount(ReadWriteArgument<Unsupported, Unsupported>),
-    /// Selects what buffer entry from the internal ILA ring buffer to read
-    BufferIndex(ReadWriteArgument<Unsupported, Word>),
     /// Selects what word from the buffer entry to read (words are 32 bits)
     WordIndex(ReadWriteArgument<Unsupported, Word>),
     /// Read out samples from the ILA buffer
-    PerformRead(ReadWriteArgument<Unsupported, Unsupported>),
+    PerformRead(ReadWriteArgument<Indices, Unsupported>),
 }

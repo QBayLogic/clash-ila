@@ -7,9 +7,9 @@ use bitvec::field::BitField;
 use bitvec::prelude::{BitVec, Msb0};
 use bitvec::slice::BitSlice;
 use bitvec::view::BitView;
-use std::ops::Range;
 use num::BigUint;
 use std::io::{Read as IoRead, Result as IoResult, Write as IoWrite};
+use std::ops::Range;
 use std::time::Duration;
 
 /// Convert a BitVec into a byte vector
@@ -166,44 +166,6 @@ impl SignalCluster {
     }
 }
 
-// /// An enum for operating on different registers on the ILA, without having to know the explicit
-// /// address.
-// #[derive(Debug, Clone, PartialEq, Eq)]
-// #[allow(unused)]
-// pub enum IlaRegisters {
-//     /// Register controlling wether or not to capture samples
-//     Capture,
-//     /// Register re-arming the trigger (and clear the buffer)
-//     TriggerReset,
-//     /// Checks the ILA for it's triggered status
-//     TriggerState,
-//     /// Register controlling how many samples it should store after triggering
-//     TriggerPoint(u32),
-//     /// The value to mask the samples against before triggering
-//     TriggerMask(ReadWrite<u32, Vec<u8>>),
-//     /// The value used by the trigger to compare samples against, if it is set to do so
-//     TriggerCompare(ReadWrite<u32, Vec<u8>>),
-//     /// How the trigger should handle mutliple predicates
-//     TriggerOp(ReadWrite<(), PredicateOperation>),
-//     /// Which predicates are active for the trigger
-//     TriggerSelect(ReadWrite<(), u32>),
-//     /// Read out samples from the ILA buffer, each vector item is an index within the buffer
-//     Buffer(Vec<u32>),
-//     /// Read the hash of the ILA, can be used to check if the current instantiated ILA is
-//     /// out-of-date
-//     Hash(u32),
-//     /// The value to mask samples before being fed to the capture predicates
-//     CaptureMask(ReadWrite<u32, Vec<u8>>),
-//     /// The value used by the capture predicates to compare samples against, if it is set to do so
-//     CaptureCompare(ReadWrite<u32, Vec<u8>>),
-//     /// How the capture should handle mutliple predicates
-//     CaptureOp(ReadWrite<(), PredicateOperation>),
-//     /// Which predicates are active for the capture
-//     CaptureSelect(ReadWrite<(), u32>),
-//     /// The amount of samples current stored in the buffer
-//     SampleCount,
-// }
-
 /// Output of the register whenever a read operation is performed on the ILA.
 #[allow(unused)]
 #[derive(Debug, Clone)]
@@ -282,9 +244,8 @@ impl IlaRegisters {
             IlaRegisters::CaptureOp(_) => (0x0000_0005, [false, false, false, true]),
             IlaRegisters::CaptureSelect(_) => (0x0000_0006, [true; 4]),
 
-            IlaRegisters::BufferIndex(_) => (0x3000_0000, [true; 4]),
             IlaRegisters::WordIndex(_) => (0x3100_0000, [true; 4]),
-            IlaRegisters::PerformRead => (0x3200_0000, [true; 4]),
+            IlaRegisters::PerformRead(_) => (0x3200_0000, [true; 4]),
         }
     }
 
@@ -348,17 +309,16 @@ impl IlaRegisters {
                 None => RegisterOutput::None,
             },
 
-            IlaRegisters::PerformRead => {
+            IlaRegisters::PerformRead(_) => {
                 RegisterOutput::BufferContent(SignalCluster::from_data(ila, output))
             }
             IlaRegisters::WordIndex(_) => RegisterOutput::None,
-            IlaRegisters::BufferIndex(_) => RegisterOutput::None,
         }
     }
 
     /// Convert the register into a `WbTransaction`, which can then be converted into wishbone
     /// records
-    pub fn to_wb_transaction(&self, ila: &IlaConfig) -> WbTransaction {
+    pub fn to_wb_transaction(&self, _ila: &IlaConfig) -> WbTransaction {
         let (addr, byte_select) = self.address();
         match self {
             IlaRegisters::Capture => WbTransaction::new_reads(byte_select, addr, vec![0]),
@@ -410,10 +370,9 @@ impl IlaRegisters {
             IlaRegisters::WordIndex(index) => {
                 WbTransaction::new_writes(byte_select, addr, vec![*index])
             }
-            IlaRegisters::BufferIndex(index) => {
-                WbTransaction::new_writes(byte_select, addr, vec![*index])
+            IlaRegisters::PerformRead(indices) => {
+                WbTransaction::new_reads(byte_select, addr, indices.clone())
             }
-            IlaRegisters::PerformRead => WbTransaction::new_reads(byte_select, addr, vec![0]),
             IlaRegisters::Hash(_) => WbTransaction::new_reads(byte_select, addr, vec![0]),
             IlaRegisters::CaptureMask(ReadWrite::Write(items)) => {
                 let words: Vec<u32> = items
@@ -490,22 +449,38 @@ pub fn perform_buffer_reads<T>(
 where
     T: IoRead + IoWrite,
 {
-    let mut execute_reg = |output: &mut Vec<u32>, register: IlaRegisters| -> IoResult<()> {
+    let indices: Vec<u32> = range.collect();
+    let words_per_index = ila.transaction_bit_count().div_ceil(32) as u32;
+
+    let mut execute_reg = |output: &mut Vec<u32>, register: IlaRegisters| -> Option<()> {
         for record in register.to_wb_transaction(ila).to_records() {
-            output.append(&mut record.perform(medium)?);
+            output.append(&mut record.perform(medium).ok()?);
         }
-        Ok(())
+        Some(())
     };
 
-    let words_per_index = ila.transaction_bit_count().div_ceil(32) as u32;
+    // Retrieve the data from the ILA in 'word lines'
     let mut throw_away = Vec::new();
-    let mut output = Vec::new();
-    for buffer_index in range {
-        execute_reg(&mut throw_away, IlaRegisters::BufferIndex(buffer_index))?;
-        for word_index in 0..words_per_index {
+    let buffer_words: Vec<Vec<u32>> = (0..words_per_index)
+        .filter_map(|word_index| {
+            let mut output: Vec<u32> = Vec::new();
             execute_reg(&mut throw_away, IlaRegisters::WordIndex(word_index))?;
-            execute_reg(&mut output, IlaRegisters::PerformRead)?;
+            execute_reg(&mut output, IlaRegisters::PerformRead(indices.clone()))?;
+            Some(output)
+        })
+        .collect();
+
+    // Re-arrange into a format our deserializer properly understands
+    let mut output: Vec<u32> = Vec::with_capacity(indices.len() * words_per_index as usize);
+    for buffer_index in &indices {
+        for word_line in &buffer_words {
+            output.push(
+                *word_line
+                    .get(*buffer_index as usize)
+                    .ok_or(std::io::Error::from(std::io::ErrorKind::InvalidData))?,
+            );
         }
     }
-    Ok(IlaRegisters::PerformRead.translate_output(ila, &output))
+
+    Ok(IlaRegisters::PerformRead(indices).translate_output(ila, &output))
 }

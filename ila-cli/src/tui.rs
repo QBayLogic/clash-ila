@@ -312,26 +312,6 @@ impl<'a> TuiSession<'a> {
                 }
                 KeyResponse::Nothing
             }
-            (TuiState::Main, KeyCode::Char(' '), _) => {
-                    match perform_buffer_reads(tx_port, self.config, 0_u32..self.config.buffer_size as u32) {
-                    Ok(RegisterOutput::BufferContent(cluster)) => self.captured.push(cluster),
-                    Ok(_) => self
-                        .log
-                        .push("Unexpected output when reading buffer".to_string()),
-                    Err(err) => self.log.push(format!("Error: {err}")),
-                };
-                KeyResponse::Nothing
-            }
-            (TuiState::Main, KeyCode::Char(' '), _) => {
-                match perform_buffer_reads(tx_port, self.config, 0_u32..self.config.buffer_size as u32) {
-                    Ok(RegisterOutput::BufferContent(cluster)) => self.captured.push(cluster),
-                    Ok(_) => self
-                        .log
-                        .push("Unexpected output when reading buffer".to_string()),
-                    Err(err) => self.log.push(format!("Error: {err}")),
-                };
-                KeyResponse::Nothing
-            }
             (TuiState::Main, KeyCode::Char('t'), _) => {
                 self.state = TuiState::InPrompt(TextPromptState::new(
                     Some("0"),
