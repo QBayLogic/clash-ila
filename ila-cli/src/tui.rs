@@ -19,7 +19,7 @@ use ratatui::{
 };
 
 use crate::cli_registers::IlaRegisters;
-use crate::communication::{perform_register_operation, RegisterOutput, SignalCluster};
+use crate::communication::{RegisterOutput, SignalCluster, perform_buffer_reads, perform_register_operation};
 use crate::config::IlaConfig;
 use crate::predicates::IlaPredicate;
 use crate::predicates::PredicateTarget;
@@ -302,11 +302,7 @@ impl<'a> TuiSession<'a> {
                         .push("System is not triggered, refusing to read samples".into());
                 } else {
                     let indices: Vec<u32> = (0_u32..self.sample_count).collect();
-                    match perform_register_operation(
-                        tx_port,
-                        self.config,
-                        &IlaRegisters::Buffer(indices),
-                    ) {
+                    match perform_buffer_reads(tx_port, self.config, 0_u32..self.sample_count) {
                         Ok(RegisterOutput::BufferContent(cluster)) => self.captured.push(cluster),
                         Ok(_) => self
                             .log
@@ -317,12 +313,7 @@ impl<'a> TuiSession<'a> {
                 KeyResponse::Nothing
             }
             (TuiState::Main, KeyCode::Char(' '), _) => {
-                let indices: Vec<u32> = (0_u32..self.config.buffer_size as u32).collect();
-                match perform_register_operation(
-                    tx_port,
-                    self.config,
-                    &IlaRegisters::Buffer(indices),
-                ) {
+                    match perform_buffer_reads(tx_port, self.config, 0_u32..self.config.buffer_size as u32) {
                     Ok(RegisterOutput::BufferContent(cluster)) => self.captured.push(cluster),
                     Ok(_) => self
                         .log
@@ -332,12 +323,7 @@ impl<'a> TuiSession<'a> {
                 KeyResponse::Nothing
             }
             (TuiState::Main, KeyCode::Char(' '), _) => {
-                let indices: Vec<u32> = (0_u32..self.config.buffer_size as u32).collect();
-                match perform_register_operation(
-                    tx_port,
-                    self.config,
-                    &IlaRegisters::Buffer(indices),
-                ) {
+                match perform_buffer_reads(tx_port, self.config, 0_u32..self.config.buffer_size as u32) {
                     Ok(RegisterOutput::BufferContent(cluster)) => self.captured.push(cluster),
                     Ok(_) => self
                         .log
@@ -546,12 +532,7 @@ impl<'a> TuiSession<'a> {
                 };
                 let should_sample = self.auto_sample && self.triggered && self.sample_count > 0;
                 if should_sample && !last_should_sample {
-                    let indices: Vec<u32> = (0_u32..self.sample_count).collect();
-                    match perform_register_operation(
-                        &mut tx_port,
-                        self.config,
-                        &IlaRegisters::Buffer(indices),
-                    ) {
+                    match perform_buffer_reads(&mut tx_port, self.config, 0_u32..self.sample_count) {
                         Ok(RegisterOutput::BufferContent(cluster)) => self.captured.push(cluster),
                         Ok(_) => self
                             .log

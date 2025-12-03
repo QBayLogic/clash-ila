@@ -381,8 +381,6 @@ pub enum RegisterSubcommand {
     TriggerOp(ReadWriteArgument<Flag, Operation>),
     /// Which predicates are active for the trigger
     TriggerSelect(ReadWriteArgument<Flag, Word>),
-    /// Read out samples from the ILA buffer, each vector item is an index within the buffer
-    Buffer(ReadWriteArgument<Indices, Unsupported>),
     /// Compare the hash value within the ILA with the value provided
     Hash(ReadWriteArgument<Word, Unsupported>),
     /// The value to mask samples before being fed to the capture predicates
@@ -395,5 +393,10 @@ pub enum RegisterSubcommand {
     CaptureSelect(ReadWriteArgument<Flag, Word>),
     /// The amount of samples current stored in the buffer
     SampleCount(ReadWriteArgument<Unsupported, Unsupported>),
+    /// Selects what buffer entry from the internal ILA ring buffer to read
+    BufferIndex(ReadWriteArgument<Unsupported, Word>),
+    /// Selects what word from the buffer entry to read (words are 32 bits)
+    WordIndex(ReadWriteArgument<Unsupported, Word>),
+    /// Read out samples from the ILA buffer
+    PerformRead(ReadWriteArgument<Unsupported, Unsupported>),
 }
-

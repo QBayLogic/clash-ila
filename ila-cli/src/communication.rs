@@ -7,6 +7,7 @@ use bitvec::field::BitField;
 use bitvec::prelude::{BitVec, Msb0};
 use bitvec::slice::BitSlice;
 use bitvec::view::BitView;
+use std::ops::Range;
 use num::BigUint;
 use std::io::{Read as IoRead, Result as IoResult, Write as IoWrite};
 use std::time::Duration;
@@ -268,7 +269,6 @@ impl IlaRegisters {
             IlaRegisters::TriggerState => (0x0000_0000, [false, false, true, false]),
             IlaRegisters::TriggerReset => (0x0000_0000, [false, false, true, false]),
             IlaRegisters::TriggerPoint(_) => (0x0000_0001, [true; 4]),
-            IlaRegisters::Buffer(_) => (0x3000_0000, [true; 4]),
             IlaRegisters::SampleCount => (0x0000_0007, [true; 4]),
             IlaRegisters::Hash(_) => (0x0000_0002, [true; 4]),
 
@@ -281,6 +281,10 @@ impl IlaRegisters {
             IlaRegisters::CaptureCompare(_) => (0x2100_0000, [true; 4]),
             IlaRegisters::CaptureOp(_) => (0x0000_0005, [false, false, false, true]),
             IlaRegisters::CaptureSelect(_) => (0x0000_0006, [true; 4]),
+
+            IlaRegisters::BufferIndex(_) => (0x3000_0000, [true; 4]),
+            IlaRegisters::WordIndex(_) => (0x3100_0000, [true; 4]),
+            IlaRegisters::PerformRead => (0x3200_0000, [true; 4]),
         }
     }
 
@@ -289,9 +293,6 @@ impl IlaRegisters {
     pub fn translate_output(&self, ila: &IlaConfig, output: &[u32]) -> RegisterOutput {
         match self {
             IlaRegisters::Capture => RegisterOutput::Capture(matches!(output.first(), Some(1))),
-            IlaRegisters::Buffer(_) => {
-                RegisterOutput::BufferContent(SignalCluster::from_data(ila, output))
-            }
             IlaRegisters::TriggerState => {
                 RegisterOutput::TriggerState(matches!(output.first(), Some(1)))
             }
@@ -346,6 +347,12 @@ impl IlaRegisters {
                 Some(n) => RegisterOutput::SampleCount(*n),
                 None => RegisterOutput::None,
             },
+
+            IlaRegisters::PerformRead => {
+                RegisterOutput::BufferContent(SignalCluster::from_data(ila, output))
+            }
+            IlaRegisters::WordIndex(_) => RegisterOutput::None,
+            IlaRegisters::BufferIndex(_) => RegisterOutput::None,
         }
     }
 
@@ -400,17 +407,13 @@ impl IlaRegisters {
             IlaRegisters::TriggerSelect(ReadWrite::Read(_)) => {
                 WbTransaction::new_reads(byte_select, addr, vec![0])
             }
-            IlaRegisters::Buffer(logical_indices) => {
-                let words_per_index = ila.transaction_bit_count().div_ceil(32) as u32;
-                let buffer_indices = logical_indices
-                    .iter()
-                    .flat_map(|index| {
-                        (*index * words_per_index..*index * words_per_index + words_per_index)
-                            .collect::<Vec<u32>>()
-                    })
-                    .collect();
-                WbTransaction::new_reads(byte_select, addr, buffer_indices)
+            IlaRegisters::WordIndex(index) => {
+                WbTransaction::new_writes(byte_select, addr, vec![*index])
             }
+            IlaRegisters::BufferIndex(index) => {
+                WbTransaction::new_writes(byte_select, addr, vec![*index])
+            }
+            IlaRegisters::PerformRead => WbTransaction::new_reads(byte_select, addr, vec![0]),
             IlaRegisters::Hash(_) => WbTransaction::new_reads(byte_select, addr, vec![0]),
             IlaRegisters::CaptureMask(ReadWrite::Write(items)) => {
                 let words: Vec<u32> = items
@@ -477,4 +480,32 @@ where
         output.append(&mut record.perform(medium)?);
     }
     Ok(register.translate_output(ila, &output))
+}
+
+pub fn perform_buffer_reads<T>(
+    medium: &mut T,
+    ila: &IlaConfig,
+    range: Range<u32>,
+) -> IoResult<RegisterOutput>
+where
+    T: IoRead + IoWrite,
+{
+    let mut execute_reg = |output: &mut Vec<u32>, register: IlaRegisters| -> IoResult<()> {
+        for record in register.to_wb_transaction(ila).to_records() {
+            output.append(&mut record.perform(medium)?);
+        }
+        Ok(())
+    };
+
+    let words_per_index = ila.transaction_bit_count().div_ceil(32) as u32;
+    let mut throw_away = Vec::new();
+    let mut output = Vec::new();
+    for buffer_index in range {
+        execute_reg(&mut throw_away, IlaRegisters::BufferIndex(buffer_index))?;
+        for word_index in 0..words_per_index {
+            execute_reg(&mut throw_away, IlaRegisters::WordIndex(word_index))?;
+            execute_reg(&mut output, IlaRegisters::PerformRead)?;
+        }
+    }
+    Ok(IlaRegisters::PerformRead.translate_output(ila, &output))
 }

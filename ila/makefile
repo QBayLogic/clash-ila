@@ -27,7 +27,9 @@ repl:
 upload: ${BUILDDIR}/04-bitstream/${TOP}.bit
 	${PROG} -S $<
 
-hdl: ${BUILDDIR}/02-hdl/${TOP}.v
+verilog: ${BUILDDIR}/02-hdl/${TOP}.v
+
+vhdl: ${BUILDDIR}/02-hdl/${TOP}.vhdl
 
 synth: ${BUILDDIR}/03-net/$(TOP).json
 
@@ -51,6 +53,18 @@ ${BUILDDIR}/03-net/$(TOP).json: ${BUILDDIR}/02-hdl/${TOP}.v
 	$(YOSYS) \
 		-l ${BUILDDIR}/log/synth.log \
 		-p 'read_verilog $(dir $^)/*.v; synth_ecp5 -top $(TOP) -json $@'
+
+${BUILDDIR}/02-hdl/${TOP}.vhdl: examples/${NAME}.hs $(abspath ..)/.ghc.environment.% src/*
+	mkdir -p ${BUILDDIR}/01-clash
+	${CABAL} build clash-ila:${NAME} --write-ghc-environment-files=always
+	${CABAL} run clash -- \
+		-fplugin=Protocols.Plugin \
+		-package-env $(abspath ..)/.ghc.environment.* \
+		--vhdl \
+		-outputdir ${BUILDDIR}/01-clash \
+		$<
+	rm -Rf ${BUILDDIR}/02-hdl
+	mv ${BUILDDIR}/01-clash/${NAME}.topEntity ${BUILDDIR}/02-hdl
 
 ${BUILDDIR}/02-hdl/${TOP}.v: examples/${NAME}.hs $(abspath ..)/.ghc.environment.% src/*
 	mkdir -p ${BUILDDIR}/01-clash
@@ -78,6 +92,6 @@ clean:
 #   Special Targets                                                            #
 ##----------------------------------------------------------------------------##
 
-.PHONY: test repl upload hdl synth netlist bitstream
+.PHONY: test repl upload verilog vhdl synth netlist bitstream
 .SECONDARY:
 .SILENT:
