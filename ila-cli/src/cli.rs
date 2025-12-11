@@ -3,7 +3,7 @@ use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use crate::communication::{perform_register_operation, RegisterOutput};
+use crate::communication::{RegisterOutput, perform_buffer_reads, perform_register_operation};
 use crate::cli_registers::IlaRegisters;
 use crate::config::ConfigMethod;
 use crate::export::ExportCluster;
@@ -136,11 +136,10 @@ impl ParseSubcommand for ExportArgs {
             .get_config()
             .unwrap_or_else(|_| panic!("File at {:?} contained errors", &self.config));
 
-        let indices: Vec<u32> = (self.start_index..self.end_index).collect();
-        let cluster = match perform_register_operation(
+        let cluster = match perform_buffer_reads(
             &mut tx_port,
             &config,
-            &IlaRegisters::Buffer(indices),
+            self.start_index..self.end_index
         ) {
             Ok(RegisterOutput::BufferContent(cluster)) => cluster,
             Ok(_) => panic!("Unexpected output when reading buffer"),
