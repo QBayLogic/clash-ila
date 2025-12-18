@@ -2,7 +2,6 @@
 {-# LANGUAGE OverloadedRecordDot #-}
 {-# LANGUAGE TypeAbstractions #-}
 {-# LANGUAGE UndecidableInstances #-}
-{-# LANGUAGE OverlappingInstances #-}
 {-# LANGUAGE NoFieldSelectors #-}
 {-# OPTIONS_GHC -fconstraint-solver-iterations=10 #-}
 {-# OPTIONS_GHC -fplugin=Protocols.Plugin #-}
@@ -18,7 +17,6 @@ import Clash.Prelude
 import Clash.Ila.Configurator
 import Clash.Ila.Internal.RingBuffer
 import Clash.Ila.Internal.Communication
-import Clash.Ila.Internal.SignalFieldSelectors
 
 import Clash.Cores.Etherbone (etherboneC)
 import Clash.Cores.UART (ValidBaud)
@@ -237,8 +235,6 @@ data IlaRM bitSizeA depth n = IlaRM
   -- ^ What buffer to read
   }
   deriving (Generic, NFDataX, Show)
-
-deriveSignalHasFields ''IlaRM
 
 {- | Read from memory mapped registers in the register map using the addresses selected from a
 wishbone packet
