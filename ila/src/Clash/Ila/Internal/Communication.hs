@@ -12,8 +12,6 @@ import Protocols.Df qualified as Df
 import Protocols.PacketStream
 
 import Data.Maybe qualified as DM
-import Data.String.Interpolate (__i)
-import Debug.Trace
 
 {- | Send out `Df` data through UART
 
