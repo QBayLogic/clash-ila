@@ -38,7 +38,7 @@ uartDf baud = Circuit exposeIn
     (recieved, txBit, acked) = uart baud rxBit transmit
 
     out =
-      ( (Ack <$> acked, pure ())
+      ( (Ack <$> acked, ())
       , (recieved, txBit)
       )
 
@@ -70,7 +70,7 @@ holdUntilAck = Circuit exposeIn
     ackToBool :: Ack -> Bool
     ackToBool (Ack b) = b
 
-    out = (pure (), hold)
+    out = ((), hold)
 
 {- | Silently drops the meta of a `PacketStream`
 Makes no other modifications to the `PacketStream` itself
