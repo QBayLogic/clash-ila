@@ -367,6 +367,14 @@ where
 pub enum RegisterSubcommand {
     /// Register containing the capture state of the ILA
     Capture(ReadWriteArgument<Unsupported, Unsupported>),
+    /// Write to the ILA's output back buffer
+    OutputBackBuffer(ReadWriteArgument<Unsupported, ByteStream>),
+    /// Read from the ILA's output front buffer. When the output signals combined are larger than 32
+    /// bits, a read takes more than one clock cycle and their value may change between these
+    /// cycles.
+    OutputFrontBuffer(ReadWriteArgument<Unsupported, Unsupported>),
+    /// Synchronize the ILA's output back buffer with the front buffer
+    OutputBufferSync(ReadWriteArgument<Unsupported, Unsupported>),
     /// Register re-arming the trigger (and clear the buffer)
     TriggerReset(ReadWriteArgument<Unsupported, Unsupported>),
     /// Checks the ILA for its triggered status
@@ -393,8 +401,9 @@ pub enum RegisterSubcommand {
     CaptureSelect(ReadWriteArgument<Flag, Word>),
     /// The amount of samples currently stored in the buffer
     SampleCount(ReadWriteArgument<Unsupported, Unsupported>),
-    /// Selects what word from the buffer entry to read (words are 32 bits)
-    WordIndex(ReadWriteArgument<Unsupported, Word>),
-    /// Read out samples from the ILA buffer
-    PerformRead(ReadWriteArgument<Indices, Unsupported>),
+    /// Controls what 32-bit word to read for each sample from the input buffer.
+    InputWordIndex(ReadWriteArgument<Unsupported, Word>),
+    /// Reads the by [`RegisterSubcommand::InputWordIndex`] controlled word for each sample
+    /// associated with the indices.
+    InputBuffer(ReadWriteArgument<Indices, Unsupported>),
 }

@@ -167,6 +167,12 @@ predicateUnselectedDefault PredicateAND True result = result
 predicateUnselectedDefault PredicateOR False _ = False
 predicateUnselectedDefault PredicateOR True result = result
 
+-- | Pair of front and back buffers used to ensure atomic read and writes.
+data DoubleBuffer a = DoubleBuffer
+  { back :: a
+  , front :: a
+  } deriving (Generic, NFDataX)
+
 {- | A record containing the values stored in the ILA register map. Not all values are read/writeable
 from the outside.
 
@@ -188,19 +194,27 @@ A lot of the register map is also exposed as a memory map, with the following la
 | 0x2100_0000 | 0b1111     | ILA capture compare   | ReadWrite   |
 | 0x3100_0000 | 0b1111     | Word index            | Write'3     |
 | 0x3200_0000 | 0b1111     | Perform read          | Read'4      |
+| 0x3300_0000 | 0b1111     | Output back buffer    | Write'5     |
+| 0x3400_0000 | 0b1111     | Output front buffer   | Read'6      |
+| 0x0000_0001 | 0b0010     | Output buffer sync    | Write'7     |
 
 '1: Reading from this address will return whether the ILA has been triggered
 '2: Each bit is for one predicate
 '3: Due to the etherbone requiring packets be split in packets of 32 bits, reading the memory
     requires the end user to provide two indices. The specific buffer index the user would like to
     read and which word of that buffer entry.
-'4: Actually performs the memory reads from the internal ILA buffer, the buffer index is the
-    address being accessed as long as it is within 0x3200_0000 0x32ff_ffff.
+'4: Actually performs the memory reads from the internal ILA buffer for input signals. The buffer
+    index is the address being accessed as long as it is within 0x3200_0000 0x32ff_ffff.
+'5: Back buffer for the ILA's output signals, if any. Writing to address 0x3300_0000 + N sets the
+    Nth word of this buffer.
+'6: Front buffer for the ILA's output signals, if any. Reading from address 0x3400_0000 + N gets
+    the Nth word of this buffer.
+'7: Synchronizes the ILA's front output buffer with the back output buffer upon writing.
 
 Future optimisation: introduce `Buffer length` register to perform multiple reads automatically
 without requiring manual reads. This will require a somewhat large overhaul of the TUI.
 -}
-data IlaRM bitSizeA depth n = IlaRM
+data IlaRM bitSizeA bitSizeOut depth n = IlaRM
   { capture :: Bool
   -- ^ If the ILA should be capturing signals
   , triggered :: Bool
@@ -231,30 +245,33 @@ data IlaRM bitSizeA depth n = IlaRM
   -- ^ The mask given to the capture predicate
   , captureCompare :: BitVector bitSizeA
   -- ^ The compare value given to the capture predicate
-  , wordIndex :: Index (bitSizeA `DivRU` 32)
+  , wordIndex :: Index ((bitSizeA + bitSizeOut) `DivRU` 32)
   -- ^ What buffer to read
+  , outputBuffer :: DoubleBuffer (BitVector bitSizeOut)
+  -- ^ Double buffer for the output signals
   }
-  deriving (Generic, NFDataX, Show)
+  deriving (Generic, NFDataX)
 
 {- | Read from memory mapped registers in the register map using the addresses selected from a
 wishbone packet
 -}
 readIlaMM ::
-  forall a depth n.
-  ( KnownNat depth
-  , KnownNat a
+  forall bitSizeA bitSizeOut depth n.
+  ( KnownNat bitSizeA
+  , KnownNat bitSizeOut
+  , KnownNat depth
   , KnownNat n
   , 1 <= n
   , 1 <= depth
-  , 1 <= a `DivRU` 32
-  , 1 <= a
+  , 1 <= bitSizeA `DivRU` 32
+  , 1 <= bitSizeA
   ) =>
   -- | The wishbone address
   BitVector 32 ->
   -- | The wishbone bus select
   BitVector 4 ->
   -- | The ILA MM
-  IlaRM a depth n ->
+  IlaRM bitSizeA bitSizeOut depth n ->
   -- | Associated value with the address and bus select, `Nothing` if there is none
   Maybe (BitVector 32)
 readIlaMM 0x0000_0000 0b0001 rm = Just . extend $ pack rm.capture
@@ -274,6 +291,8 @@ readIlaMM address 0b1111 rm
       Just $ getWord rm.captureMask index
   | testBits address 0x2100_0000 0xff00_0000 =
       Just $ getWord rm.captureCompare index
+  | testBits address 0x3400_0000 0xff00_0000 =
+      Just $ getWord rm.outputBuffer.front (resize index)
  where
   index = unpack . resize $ address .&. 0x00ff_ffff
 readIlaMM _ _ _ = Nothing
@@ -299,14 +318,15 @@ data IlaAction = None | ResetTrigger
 
 -- | Update the memory mapped registers from the register map from the wishbone request
 writeIlaMM ::
-  forall a depth n.
-  ( KnownNat depth
-  , KnownNat a
+  forall bitSizeA bitSizeOut depth n.
+  ( KnownNat bitSizeA
+  , KnownNat bitSizeOut
+  , KnownNat depth
   , KnownNat n
   , 1 <= depth
   , 1 <= n
-  , 1 <= a `DivRU` 32
-  , 1 <= a
+  , 1 <= bitSizeA `DivRU` 32
+  , 1 <= (bitSizeA + bitSizeOut) `DivRU` 32
   ) =>
   -- | The wishbone address
   BitVector 32 ->
@@ -315,12 +335,13 @@ writeIlaMM ::
   -- | The value to write
   BitVector 32 ->
   -- | The Ila register map
-  IlaRM a depth n ->
+  IlaRM bitSizeA bitSizeOut depth n ->
   -- | Updated Ila register map, invalid addresses will not modify the register map
-  (IlaRM a depth n, IlaAction)
+  (IlaRM bitSizeA bitSizeOut depth n, IlaAction)
 writeIlaMM 0x0000_0000 0b0001 write rm = (rm{capture = unpack $ truncateB write}, None)
 writeIlaMM 0x0000_0000 0b0010 _write rm = (rm{triggered = False}, ResetTrigger)
 writeIlaMM 0x0000_0001 0b1111 write rm = (rm{triggerPoint = unpack $ resize write}, None)
+writeIlaMM 0x0000_0001 0b0010 _write rm = (rm{outputBuffer = (rm.outputBuffer){ front = rm.outputBuffer.back}}, None)
 writeIlaMM 0x0000_0003 0b0001 write rm = (rm{triggerOperation = unpack $ resize write}, None)
 writeIlaMM 0x0000_0004 0b1111 write rm = (rm{triggerSelect = write}, None)
 writeIlaMM 0x0000_0005 0b0001 write rm = (rm{captureOperation = unpack $ resize write}, None)
@@ -334,9 +355,10 @@ writeIlaMM address 0b1111 write rm
       (rm{captureMask = setWord rm.captureMask index write}, None)
   | testBits address 0x2100_0000 0xff00_0000 =
       (rm{captureCompare = setWord rm.captureCompare index write}, None)
-
   | testBits address 0x3100_0000 0xff00_0000 =
       (rm{wordIndex = unpack $ resize write}, None)
+  | testBits address 0x3300_0000 0xff00_0000 =
+      (rm{outputBuffer = (rm.outputBuffer){ back = setWord rm.outputBuffer.back (resize index) write}}, None)
  where
   -- We use 32 bit words, the indices incrementing writes receive is on a byte basis
   -- To correct for this, we can simply shift right by 2 (dividing by 4)
@@ -350,20 +372,20 @@ This circuit can be used to instantiate and configure an ILA using a wishbone in
 ILA behaviour is done by writing to specific addresses and selecting the right bytes using busSelect.
 -}
 ilaWb ::
-  forall dom.
+  forall dom (out :: Ports).
   (HiddenClockResetEnable dom) =>
   -- | Initial ILA configuration
-  IlaConfig dom ->
+  IlaConfig dom out ->
   -- | The ILA wishbone interface
   Circuit
     (Wishbone dom Standard 32 4)
-    ()
-ilaWb (IlaConfig @_ @a @depth @m depth initTriggerPoint ilaHash tracing predicates) = Circuit exposeIn
+    (CSignal dom (PortsTuple out))
+ilaWb (IlaConfig @_ @a @outputs @depth @m depth initTriggerPoint ilaHash tracing predicates) = Circuit exposeIn
  where
   exposeIn (fwdM2S, _) = out
    where
     -- \| The initial contents of the memory map
-    initRM :: IlaRM (BitSize a) depth m
+    initRM :: IlaRM (BitSize a) (BitSize (PortsTuple outputs)) depth m
     initRM =
       IlaRM
         { capture = False
@@ -381,6 +403,7 @@ ilaWb (IlaConfig @_ @a @depth @m depth initTriggerPoint ilaHash tracing predicat
         , captureMask = maxBound
         , captureCompare = 0
         , wordIndex = 0
+        , outputBuffer = DoubleBuffer { back = unpack 0, front = unpack 0 }
         }
 
     -- \| Update parts of the RM which aren't depending on input from WB
@@ -392,9 +415,9 @@ ilaWb (IlaConfig @_ @a @depth @m depth initTriggerPoint ilaHash tracing predicat
       -- \| The amount of samples currently being stored in the buffer
       Index (depth + 1) ->
       -- \| The current register map
-      IlaRM (BitSize a) depth m ->
+      IlaRM (BitSize a) (BitSize (PortsTuple out)) depth m ->
       -- \| The updated register map
-      IlaRM (BitSize a) depth m
+      IlaRM (BitSize a) (BitSize (PortsTuple out)) depth m
     updateRM triggered capture buffLength rm =
       rm
         { triggered = rm.triggered || triggered
@@ -405,7 +428,7 @@ ilaWb (IlaConfig @_ @a @depth @m depth initTriggerPoint ilaHash tracing predicat
         }
 
     -- \| Selects the right predicate and applies it on incoming sample
-    doesTrigger :: IlaRM (BitSize a) depth m -> a -> Vec m (RawPredicate a) -> Bool
+    doesTrigger :: IlaRM (BitSize a) (BitSize (PortsTuple out)) depth m -> a -> Vec m (RawPredicate a) -> Bool
     doesTrigger rm currentSample predicates' =
       rm.capture -- If capture is disabled, don't bother with testing predicates
         && ( predicateOperation rm.triggerOperation $
@@ -416,7 +439,7 @@ ilaWb (IlaConfig @_ @a @depth @m depth initTriggerPoint ilaHash tracing predicat
            )
 
     -- \| Selects the right predicate and applies it on incoming sample
-    captureActive :: IlaRM (BitSize a) depth m -> a -> Vec m (RawPredicate a) -> Bool
+    captureActive :: IlaRM (BitSize a) (BitSize (PortsTuple out)) depth m -> a -> Vec m (RawPredicate a) -> Bool
     captureActive rm currentSample predicates' =
       predicateOperation rm.captureOperation $
         zipWith
@@ -456,7 +479,7 @@ ilaWb (IlaConfig @_ @a @depth @m depth initTriggerPoint ilaHash tracing predicat
     -- samples
     --
     -- To combat this, we simply delay the signal we sample by one cycle!
-    delayedTrace = register (unpack 0) tracing
+    delayedTrace = register (unpack 0) (bundle (tracing, ilaRM.outputBuffer.front))
 
     -- \| The output from the ILA's internal buffer
     (bufferOutput, bufferLength) =
@@ -479,7 +502,7 @@ ilaWb (IlaConfig @_ @a @depth @m depth initTriggerPoint ilaHash tracing predicat
       -- \| The current WB packet
       WishboneM2S 32 4 ->
       -- \| The ila register map
-      IlaRM (BitSize a) depth m ->
+      IlaRM (BitSize a) (BitSize (PortsTuple out)) depth m ->
       -- \| The value the buffer is currently pointing at
       BitVector 32 ->
       -- \| The value the component should respond with
@@ -523,7 +546,7 @@ ilaWb (IlaConfig @_ @a @depth @m depth initTriggerPoint ilaHash tracing predicat
     -- Writes are done in one clock cycle, but wishbone timing requires us to delay it by one clock cycle
     out =
       ( register emptyWishboneS2M $ liftA2 reply delayedAck readManager
-      , ()
+      , unpack <$> ilaRM.outputBuffer.front
       )
 
 {- | The ILA component itself
@@ -535,44 +558,44 @@ device. If run configuration of the ILA on the FPGA is desired, please look at `
 an ILA with an Wishbone interface instead.
 -}
 ila ::
-  forall dom.
+  forall dom (out :: Ports).
   (HiddenClockResetEnable dom) =>
   -- | The initial configuration of the ILA
-  IlaConfig dom ->
+  IlaConfig dom out ->
   -- | The ILA circuit, the incoming packet stream should contain valid `Etherbone` packets. The
   -- outgoing stream are etherbone response packets.
   Circuit
     (PacketStream dom 4 ())
-    (PacketStream dom 4 ())
+    (PacketStream dom 4 (), CSignal dom (PortsTuple out))
 ila config = circuit $ \incoming -> do
   (outgoing, wbMaster) <- etherboneC 0 (pure Nil) -< incoming
 
-  ilaWb config -< wbMaster
+  outputs <- ilaWb config -< wbMaster
 
-  idC -< outgoing
+  idC -< (outgoing, outputs)
 
 {- | UART wrapper around the ILA. A simple drop-in replacement for `ila`. Useful if the only
 connection to the host PC is an UART connection.
 -}
 ilaUart ::
-  forall dom baud.
+  forall dom baud (out :: Ports).
   ( HiddenClockResetEnable dom
   , ValidBaud dom baud
   ) =>
   SNat baud ->
   -- | The initial configuration of the ILA
-  IlaConfig dom ->
+  IlaConfig dom out ->
   -- | The ILA circuit but with signals of bits as input and output. These should be directly wired
   -- to the toplevel UART RX and TX pins.
   Circuit
     (CSignal dom Bit)
-    (CSignal dom Bit)
+    (CSignal dom Bit, CSignal dom (PortsTuple out))
 ilaUart baud config = circuit $ \rxBit -> do
   (rxByte, txBit) <- uartDf baud -< (txByte, rxBit)
 
   rxPs <- etherboneDfPacketizer <| holdUntilAck -< rxByte
   txByte <- ps2df -< txPs
 
-  txPs <- ila config -< rxPs
+  (txPs, outputs) <- ila config -< rxPs
 
-  idC -< txBit
+  idC -< (txBit, outputs)
