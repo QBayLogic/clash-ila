@@ -19,11 +19,11 @@ import Clash.Ila.Internal.RingBuffer
 import Clash.Ila.Internal.Communication
 
 import Clash.Cores.Etherbone (etherboneC)
-import Clash.Cores.UART (ValidBaud)
+import Clash.Cores.Uart (ValidBaud)
 
 import Protocols
 import Protocols.PacketStream
-import Protocols.Wishbone
+import Protocols.Experimental.Wishbone
 
 {- | The buffer of the ila, with signals to control whether or not the signals get captured
 

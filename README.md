@@ -52,7 +52,7 @@ outputs = { clash-compiler, clash-ila, ... }:
   let
     # The GHC version you would like to use
     # This has to be be one of the supported versions of clash-compiler
-    compiler-version = "ghc9101";
+    compiler-version = "ghc9124";
 
     # Import the normal and Haskell package set from clash-compiler
     pkgs = (import clash-compiler.inputs.nixpkgs {

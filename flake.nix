@@ -3,9 +3,14 @@
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
     clash-compiler.url = "github:clash-lang/clash-compiler";
+    clash-protocols-src = {
+      url = "github:clash-lang/clash-protocols";
+      flake = false;
+    };
     clash-cores = {
-      url = "github:jaschutte/clash-cores/c8f74f21ffffeaa7c765657841269ca8da3babed";
+      url = "github:clash-lang/clash-cores";
       inputs.clash-compiler.follows = "clash-compiler";
+      inputs.clash-protocols-src.follows = "clash-protocols-src";
     };
     ecpprog.url = "github:diegodiv/ecpprog";
   };
@@ -14,7 +19,7 @@
       let
         # The GHC version you would like to use
         # This has to be be one of the supported versions of clash-compiler
-        compiler-version = "ghc9101";
+        compiler-version = "ghc9124";
 
         pkgs = import nixpkgs {
           inherit system;

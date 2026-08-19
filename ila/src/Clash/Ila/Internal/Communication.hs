@@ -4,7 +4,7 @@
 
 module Clash.Ila.Internal.Communication where
 
-import Clash.Cores.UART (ValidBaud, uart)
+import Clash.Cores.Uart (ValidBaud, uart)
 import Clash.Prelude
 
 import Protocols
