@@ -2,19 +2,15 @@
 
 module Tests.Communication where
 
-import Clash.Hedgehog.Sized.Unsigned (genUnsigned)
 import Clash.Prelude as CP
-import Clash.Sized.Vector (fromList, unsafeFromList)
+import Clash.Sized.Vector (unsafeFromList)
 
-import Protocols
-import Protocols.Df qualified as Df
-import Protocols.PacketStream
+import Protocols.Experimental.PacketStream
+import Protocols.Experimental.Simulate
 
-import Data.Data qualified as DD
-import Data.List qualified as DL
 import Data.List.Split qualified as DLS
 import Data.Maybe qualified as DM
-import Prelude as P
+import Prelude as P hiding (reads)
 
 import Hedgehog
 import Hedgehog.Gen qualified as Gen
