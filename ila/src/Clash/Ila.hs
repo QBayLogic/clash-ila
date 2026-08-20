@@ -412,13 +412,11 @@ ilaWb (IlaConfig @_ @a @depth @m depth initTriggerPoint ilaHash tracing predicat
     -- \| Selects the right predicate and applies it on incoming sample
     doesTrigger :: IlaRM (BitSize a) depth m -> a -> Vec m (RawPredicate a) -> Bool
     doesTrigger rm currentSample predicates' =
-      rm.capture -- If capture is disabled, don't bother with testing predicates
-        && ( predicateOperation rm.triggerOperation $
-              zipWith
-                (predicateUnselectedDefault rm.triggerOperation)
-                (reverse . unpack $ resize rm.triggerSelect)
-                ((\predicate -> predicate currentSample rm.triggerCompare rm.triggerMask) <$> predicates')
-           )
+      predicateOperation rm.triggerOperation $
+        zipWith
+          (predicateUnselectedDefault rm.triggerOperation)
+          (reverse . unpack $ resize rm.triggerSelect)
+          ((\predicate -> predicate currentSample rm.triggerCompare rm.triggerMask) <$> predicates')
 
     -- \| Selects the right predicate and applies it on incoming sample
     captureActive :: IlaRM (BitSize a) depth m -> a -> Vec m (RawPredicate a) -> Bool
