@@ -399,10 +399,15 @@ ilaWb (IlaConfig @_ @a @depth @m depth initTriggerPoint ilaHash tracing predicat
       rm
         { triggered = rm.triggered || triggered
         , capture = capture
-        , sampledAfterTrigger = if rm.triggered then satAdd SatBound 1 rm.sampledAfterTrigger else 0
+        , sampledAfterTrigger = sampledAfterTrigger
         , shouldSample = not rm.triggered || rm.sampledAfterTrigger < rm.triggerPoint
         , sampleCount = buffLength
         }
+     where
+      sampledAfterTrigger
+        | not rm.triggered = 0
+        | capture = satAdd SatBound 1 rm.sampledAfterTrigger
+        | otherwise = rm.sampledAfterTrigger
 
     -- \| Selects the right predicate and applies it on incoming sample
     doesTrigger :: IlaRM (BitSize a) depth m -> a -> Vec m (RawPredicate a) -> Bool
