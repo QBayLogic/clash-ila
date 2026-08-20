@@ -318,7 +318,7 @@ writeIlaMM ::
   IlaRM a depth n ->
   -- | Updated Ila register map, invalid addresses will not modify the register map
   (IlaRM a depth n, IlaAction)
-writeIlaMM 0x0000_0000 0b0001 write rm = (rm{capture = unpack $ truncateB write}, None)
+-- Note there is deliberately no write for 0x0000_0000 0b0001. `capture` is read only.
 writeIlaMM 0x0000_0000 0b0010 _write rm = (rm{triggered = False}, ResetTrigger)
 writeIlaMM 0x0000_0001 0b1111 write rm = (rm{triggerPoint = unpack $ resize write}, None)
 writeIlaMM 0x0000_0003 0b0001 write rm = (rm{triggerOperation = unpack $ resize write}, None)
