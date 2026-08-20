@@ -8,7 +8,7 @@ use bitvec::prelude::{BitVec, Msb0};
 use bitvec::slice::BitSlice;
 use bitvec::view::BitView;
 use num::BigUint;
-use std::io::{Read as IoRead, Result as IoResult, Write as IoWrite};
+use std::io::{Error as IoError, ErrorKind, Read as IoRead, Result as IoResult, Write as IoWrite};
 use std::ops::Range;
 use std::time::Duration;
 
@@ -449,6 +449,27 @@ pub fn perform_buffer_reads<T>(
 where
     T: IoRead + IoWrite,
 {
+    // Only the first `sample_count` entries hold valid data.
+    let sample_count = match perform_register_operation(medium, ila, &IlaRegisters::SampleCount)? {
+        RegisterOutput::SampleCount(count) => count,
+        _ => {
+            return Err(IoError::new(
+                ErrorKind::InvalidData,
+                "Unable to determine how many samples the ILA is holding",
+            ));
+        }
+    };
+
+    if range.end > sample_count {
+        return Err(IoError::new(
+            ErrorKind::InvalidInput,
+            format!(
+                "Refusing to read buffer range {}..{}, the ILA is only holding {} samples",
+                range.start, range.end, sample_count
+            ),
+        ));
+    }
+
     let indices: Vec<u32> = range.collect();
     let words_per_index = ila.transaction_bit_count().div_ceil(32) as u32;
 
