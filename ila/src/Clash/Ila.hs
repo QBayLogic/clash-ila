@@ -492,9 +492,7 @@ ilaWb (IlaConfig @_ @a @depth @m depth initTriggerPoint ilaHash tracing predicat
       | otherwise =
           case readIlaMM wb.addr wb.busSelect rm of
             Just v -> v
-            Nothing
-              | rm.shouldSample -> 0
-              | otherwise -> bufValue
+            Nothing -> bufValue
     readManager =
       mux
         ((\fwd -> fwd.busCycle && fwd.strobe && (not fwd.writeEnable)) <$> fwdM2S)
