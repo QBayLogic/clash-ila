@@ -8,7 +8,7 @@
 module ClashIlaDemo where
 
 import Clash.Annotations.TH
-import Clash.Cores.UART (ValidBaud)
+import Clash.Cores.Uart (ValidBaud)
 import Clash.Prelude
 
 import Clash.Ila.Configurator

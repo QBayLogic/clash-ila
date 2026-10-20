@@ -19,11 +19,11 @@ import Clash.Ila.Internal.RingBuffer
 import Clash.Ila.Internal.Communication
 
 import Clash.Cores.Etherbone (etherboneC)
-import Clash.Cores.UART (ValidBaud)
+import Clash.Cores.Uart (ValidBaud)
 
 import Protocols
 import Protocols.PacketStream
-import Protocols.Wishbone
+import Protocols.Experimental.Wishbone
 
 {- | The buffer of the ila, with signals to control whether or not the signals get captured
 
@@ -318,7 +318,7 @@ writeIlaMM ::
   IlaRM a depth n ->
   -- | Updated Ila register map, invalid addresses will not modify the register map
   (IlaRM a depth n, IlaAction)
-writeIlaMM 0x0000_0000 0b0001 write rm = (rm{capture = unpack $ truncateB write}, None)
+-- Note there is deliberately no write for 0x0000_0000 0b0001. `capture` is read only.
 writeIlaMM 0x0000_0000 0b0010 _write rm = (rm{triggered = False}, ResetTrigger)
 writeIlaMM 0x0000_0001 0b1111 write rm = (rm{triggerPoint = unpack $ resize write}, None)
 writeIlaMM 0x0000_0003 0b0001 write rm = (rm{triggerOperation = unpack $ resize write}, None)
@@ -399,21 +399,24 @@ ilaWb (IlaConfig @_ @a @depth @m depth initTriggerPoint ilaHash tracing predicat
       rm
         { triggered = rm.triggered || triggered
         , capture = capture
-        , sampledAfterTrigger = if rm.triggered then satAdd SatBound 1 rm.sampledAfterTrigger else 0
+        , sampledAfterTrigger = sampledAfterTrigger
         , shouldSample = not rm.triggered || rm.sampledAfterTrigger < rm.triggerPoint
         , sampleCount = buffLength
         }
+     where
+      sampledAfterTrigger
+        | not rm.triggered = 0
+        | capture = satAdd SatBound 1 rm.sampledAfterTrigger
+        | otherwise = rm.sampledAfterTrigger
 
     -- \| Selects the right predicate and applies it on incoming sample
     doesTrigger :: IlaRM (BitSize a) depth m -> a -> Vec m (RawPredicate a) -> Bool
     doesTrigger rm currentSample predicates' =
-      rm.capture -- If capture is disabled, don't bother with testing predicates
-        && ( predicateOperation rm.triggerOperation $
-              zipWith
-                (predicateUnselectedDefault rm.triggerOperation)
-                (reverse . unpack $ resize rm.triggerSelect)
-                ((\predicate -> predicate currentSample rm.triggerCompare rm.triggerMask) <$> predicates')
-           )
+      predicateOperation rm.triggerOperation $
+        zipWith
+          (predicateUnselectedDefault rm.triggerOperation)
+          (reverse . unpack $ resize rm.triggerSelect)
+          ((\predicate -> predicate currentSample rm.triggerCompare rm.triggerMask) <$> predicates')
 
     -- \| Selects the right predicate and applies it on incoming sample
     captureActive :: IlaRM (BitSize a) depth m -> a -> Vec m (RawPredicate a) -> Bool
@@ -489,9 +492,7 @@ ilaWb (IlaConfig @_ @a @depth @m depth initTriggerPoint ilaHash tracing predicat
       | otherwise =
           case readIlaMM wb.addr wb.busSelect rm of
             Just v -> v
-            Nothing
-              | rm.shouldSample -> 0
-              | otherwise -> bufValue
+            Nothing -> bufValue
     readManager =
       mux
         ((\fwd -> fwd.busCycle && fwd.strobe && (not fwd.writeEnable)) <$> fwdM2S)
